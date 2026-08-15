@@ -7,6 +7,7 @@ struct OverlayView: View {
     let model: OverviewModel
     let hotKeyDisplay: String
     let onDismiss: () -> Void
+    let onActivate: (ManagedWindow) -> Void
 
     var body: some View {
         GeometryReader { geometry in
@@ -91,6 +92,14 @@ struct OverlayView: View {
             }
             .padding(OverlayLayout.outerPadding)
             .frame(maxWidth: .infinity)
+            // R9 again: gaps *between* tiles belong to the scroll view, which
+            // would otherwise swallow the click before it reaches the
+            // dismiss layer underneath.
+            .background {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onDismiss)
+            }
         }
         .scrollBounceBehavior(.basedOnSize)
     }
@@ -107,10 +116,7 @@ struct OverlayView: View {
                     model.hoveredID = nil
                 }
             },
-            onActivate: {
-                model.activate(window)
-                onDismiss()
-            },
+            onActivate: { onActivate(window) },
             onClose: { model.close(window) }
         )
         // R4: drag a tile onto another to take its place in the order.

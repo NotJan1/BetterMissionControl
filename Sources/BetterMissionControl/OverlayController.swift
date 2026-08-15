@@ -31,7 +31,11 @@ final class OverlayController {
         let root = OverlayView(
             model: model,
             hotKeyDisplay: hotKeyDisplay,
-            onDismiss: { [weak self] in self?.hide() }
+            onDismiss: { [weak self] in self?.hide() },
+            onActivate: { [weak self] window in
+                self?.model.activate(window)
+                self?.hide(returningFocus: false)
+            }
         )
         panel.contentView = NSHostingView(rootView: root)
         panel.setFrame(screen.frame, display: true)
@@ -44,15 +48,20 @@ final class OverlayController {
         panel.makeKeyAndOrderFront(nil)
     }
 
-    func hide() {
+    /// - Parameter returningFocus: pass `false` when a window has just been
+    ///   activated. Hiding the app in that case would hand focus back to
+    ///   whatever was frontmost *before* the overlay opened, undoing the
+    ///   activation the user just asked for.
+    func hide(returningFocus: Bool = true) {
         guard let panel else { return }
         removeKeyMonitor()
         model.stop()
         panel.orderOut(nil)
         panel.contentView = nil
         self.panel = nil
-        // Hand focus back to whatever the user was in before.
-        NSApp.hide(nil)
+        if returningFocus {
+            NSApp.hide(nil)
+        }
     }
 
     // MARK: - Keyboard
@@ -102,7 +111,7 @@ final class OverlayController {
         case kVK_Return, kVK_ANSI_KeypadEnter:               // R6
             guard let window = model.selectedWindow else { return true }
             model.activate(window)
-            hide()
+            hide(returningFocus: false)
             return true
         case kVK_LeftArrow:
             model.moveSelection(.left, columns: columns)
