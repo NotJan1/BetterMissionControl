@@ -41,6 +41,9 @@ final class OverlayController {
         panel.setFrame(screen.frame, display: true)
         self.panel = panel
 
+        // Positions are stored normalised, so the model needs the pixel size
+        // before it can resolve any of them.
+        model.overlaySize = screen.frame.size
         model.start()
         installKeyMonitor()
 
@@ -92,15 +95,9 @@ final class OverlayController {
         }
     }
 
-    private var currentColumns: Int {
-        guard let size = panel?.frame.size else { return 1 }
-        return OverlayLayout.columnCount(for: model.windows.count, in: size)
-    }
-
     /// Returns true when the event was consumed.
     private func handle(_ event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let columns = currentColumns
 
         if modifiers.contains(.command) {
             guard let window = model.selectedWindow else { return false }
@@ -122,19 +119,19 @@ final class OverlayController {
             hide(returningFocus: false)
             return true
         case kVK_LeftArrow:
-            model.moveSelection(.left, columns: columns)
+            model.moveSelection(.left)
             return true
         case kVK_RightArrow:
-            model.moveSelection(.right, columns: columns)
+            model.moveSelection(.right)
             return true
         case kVK_UpArrow:
-            model.moveSelection(.up, columns: columns)
+            model.moveSelection(.up)
             return true
         case kVK_DownArrow:
-            model.moveSelection(.down, columns: columns)
+            model.moveSelection(.down)
             return true
         case kVK_Tab:                                        // R5
-            model.moveSelection(modifiers.contains(.shift) ? .previous : .next, columns: columns)
+            model.moveSelection(modifiers.contains(.shift) ? .previous : .next)
             return true
         default:
             return false

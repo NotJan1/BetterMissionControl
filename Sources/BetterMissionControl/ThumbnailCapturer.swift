@@ -5,18 +5,22 @@ enum ThumbnailCapturer {
     /// Tiles are never shown larger than roughly a third of the screen, so
     /// capturing beyond this just burns time.
     private static let maxDimension: CGFloat = 640
-    /// Captured at 2x so thumbnails stay crisp on Retina displays.
-    private static let scaleFactor: CGFloat = 2
 
     /// One-shot capture of a single window's contents.
-    static func capture(_ window: SCWindow) async -> CGImage? {
+    ///
+    /// - Parameter backingScale: the display's backing scale factor. Capturing
+    ///   at the display's own pixel density is what keeps thumbnails sharp;
+    ///   capturing in points and letting the view upscale is what makes them
+    ///   look soft on Retina.
+    static func capture(_ window: SCWindow, backingScale: CGFloat = 2) async -> CGImage? {
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let configuration = SCStreamConfiguration()
 
         let longestSide = max(window.frame.width, window.frame.height)
         let fit = longestSide > 0 ? min(1.0, maxDimension / longestSide) : 1.0
-        configuration.width = max(1, Int(window.frame.width * fit * scaleFactor))
-        configuration.height = max(1, Int(window.frame.height * fit * scaleFactor))
+        let scale = max(1, backingScale)
+        configuration.width = max(1, Int(window.frame.width * fit * scale))
+        configuration.height = max(1, Int(window.frame.height * fit * scale))
         configuration.showsCursor = false
         configuration.scalesToFit = true
         configuration.ignoreShadowsSingleWindow = true

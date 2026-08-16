@@ -21,10 +21,15 @@ final class OverviewModel {
     /// because SwiftUI's `@State` is a macro whose compiler plugin ships only
     /// with full Xcode, and only one tile can be hovered at a time anyway.
     var hoveredID: CGWindowID?
+    private(set) var draggingID: CGWindowID?
     /// Transient banner shown when an action couldn't be carried out, so a
     /// failure says so instead of looking like the overlay ignored the key.
     private(set) var actionMessage: String?
     private var messageTask: Task<Void, Never>?
+
+    /// Set by the controller when the overlay opens. Positions are stored
+    /// normalised, so nearly everything here needs the pixel size to resolve.
+    var overlaySize: CGSize = .zero
 
     /// How often the overlay re-reads the window list and re-captures
     /// thumbnails while open. Fast enough to feel live (R10), slow enough not
@@ -36,6 +41,7 @@ final class OverviewModel {
     private var terminationObserver: NSObjectProtocol?
     private let layoutStore = LayoutStore()
     private var hasLoadedOnce = false
+    private var dragStart: (id: CGWindowID, center: CGPoint)?
 
     // MARK: - Lifecycle
 
@@ -44,6 +50,7 @@ final class OverviewModel {
         hasLoadedOnce = false
         windows = []
         desktopPicture = nil
+        actionMessage = nil
 
         let missing = PermissionsManager.missing
         if missing.contains(.screenRecording) {
@@ -62,6 +69,8 @@ final class OverviewModel {
     func stop() {
         refreshTask?.cancel()
         refreshTask = nil
+        messageTask?.cancel()
+        messageTask = nil
         if let terminationObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(terminationObserver)
             self.terminationObserver = nil
@@ -103,6 +112,7 @@ final class OverviewModel {
 
         sourceWindows = snapshot.sourceWindows
         reconcile(with: snapshot.windows)
+        resolvePositions()
 
         if !hasLoadedOnce {
             hasLoadedOnce = true
@@ -114,14 +124,15 @@ final class OverviewModel {
         ensureValidSelection()
     }
 
-    /// Merges a fresh snapshot into the current list *without* disturbing the
-    /// user's ordering: known windows keep their slot, vanished ones drop out,
-    /// and genuinely new ones are appended.
+    /// Merges a fresh snapshot into the current list, keeping each tile's
+    /// placement: known windows hold their position, vanished ones drop out,
+    /// and genuinely new ones arrive without a position for `resolvePositions`
+    /// to fill in.
     private func reconcile(with fresh: [ManagedWindow]) {
         let freshByID = Dictionary(uniqueKeysWithValues: fresh.map { ($0.id, $0) })
 
         if !hasLoadedOnce {
-            windows = layoutStore.applyOrder(to: fresh)
+            windows = fresh
             return
         }
 
@@ -130,9 +141,10 @@ final class OverviewModel {
 
         for existing in windows {
             guard var refreshed = freshByID[existing.id] else { continue }
-            // Keep the thumbnail we already have so the tile doesn't blink
-            // between captures.
+            // Keep the thumbnail so the tile doesn't blink between captures,
+            // and the position so a refresh never moves a tile the user placed.
             refreshed.thumbnail = existing.thumbnail
+            refreshed.normalizedCenter = existing.normalizedCenter
             updated.append(refreshed)
         }
 
@@ -141,19 +153,36 @@ final class OverviewModel {
         windows = updated
     }
 
+    /// Gives every tile a centre: the one the user saved if there is one (R4),
+    /// otherwise a slot in the automatic app-grouped arrangement (R3).
+    private func resolvePositions() {
+        guard overlaySize.width > 0, overlaySize.height > 0 else { return }
+        let automatic = OverlayLayout.automaticCenters(count: windows.count, in: overlaySize)
+        var consumed: Set<Int> = []
+
+        for index in windows.indices where windows[index].normalizedCenter == nil {
+            if let saved = layoutStore.center(for: windows[index].layoutKey, consumed: &consumed) {
+                windows[index].normalizedCenter = saved
+            } else if automatic.indices.contains(index) {
+                windows[index].normalizedCenter = automatic[index]
+            }
+        }
+    }
+
     private func captureThumbnails() async {
         let targets = windows.compactMap { window in
             sourceWindows[window.id].map { (id: window.id, source: $0) }
         }
         guard !targets.isEmpty else { return }
 
+        let scale = tileScale
         let images = await withTaskGroup(
             of: (CGWindowID, CGImage?).self,
             returning: [CGWindowID: CGImage].self
         ) { group in
             for target in targets {
                 group.addTask {
-                    (target.id, await ThumbnailCapturer.capture(target.source))
+                    (target.id, await ThumbnailCapturer.capture(target.source, backingScale: scale))
                 }
             }
             var collected: [CGWindowID: CGImage] = [:]
@@ -171,12 +200,69 @@ final class OverviewModel {
         }
     }
 
+    /// Backing scale of the display the overlay is on, so captures match the
+    /// pixel density they'll be drawn at rather than being upscaled.
+    private var tileScale: CGFloat {
+        WindowEnumerator.screenUnderCursor().backingScaleFactor
+    }
+
     private func captureDesktopPicture(from snapshot: WindowSnapshot) async {
         guard let display = snapshot.display else { return }
         desktopPicture = await ThumbnailCapturer.captureDesktop(
             display: display,
             excluding: snapshot.foregroundWindows
         )
+    }
+
+    // MARK: - Geometry
+
+    func tileSize(in size: CGSize) -> CGSize {
+        OverlayLayout.cellSize(count: max(windows.count, 1), in: size)
+    }
+
+    func center(for window: ManagedWindow, in size: CGSize) -> CGPoint {
+        let normalized = window.normalizedCenter ?? CGPoint(x: 0.5, y: 0.5)
+        return CGPoint(x: normalized.x * size.width, y: normalized.y * size.height)
+    }
+
+    // MARK: - Dragging (R4)
+
+    func beginDrag(_ window: ManagedWindow) {
+        guard dragStart?.id != window.id else { return }
+        dragStart = (window.id, window.normalizedCenter ?? CGPoint(x: 0.5, y: 0.5))
+        draggingID = window.id
+        selectedID = window.id
+    }
+
+    func updateDrag(_ window: ManagedWindow, translation: CGSize, in size: CGSize) {
+        guard let dragStart, dragStart.id == window.id,
+              size.width > 0, size.height > 0,
+              let index = windows.firstIndex(where: { $0.id == window.id }) else { return }
+
+        let proposed = CGPoint(
+            x: dragStart.center.x + translation.width / size.width,
+            y: dragStart.center.y + translation.height / size.height
+        )
+        windows[index].normalizedCenter = OverlayLayout.clampCenter(
+            proposed,
+            tile: tileSize(in: size),
+            in: size
+        )
+    }
+
+    func endDrag() {
+        guard dragStart != nil else { return }
+        dragStart = nil
+        draggingID = nil
+        layoutStore.save(windows)
+    }
+
+    func resetLayout() {
+        layoutStore.reset()
+        for index in windows.indices {
+            windows[index].normalizedCenter = nil
+        }
+        resolvePositions()
     }
 
     // MARK: - Selection
@@ -189,49 +275,83 @@ final class OverviewModel {
         if let selectedID, windows.contains(where: { $0.id == selectedID }) { return }
         // Edge case: the selected window went away. Land on a real tile rather
         // than pointing at nothing.
-        selectedID = windows.first?.id
-    }
-
-    var selectedIndex: Int? {
-        guard let selectedID else { return nil }
-        return windows.firstIndex { $0.id == selectedID }
+        selectedID = readingOrder().first?.id
     }
 
     var selectedWindow: ManagedWindow? {
-        selectedIndex.map { windows[$0] }
-    }
-
-    func select(index: Int) {
-        guard windows.indices.contains(index) else { return }
-        selectedID = windows[index].id
-    }
-
-    /// R5: arrow keys move by grid geometry, Tab moves linearly.
-    func moveSelection(_ direction: SelectionDirection, columns: Int) {
-        guard !windows.isEmpty else { return }
-        guard let current = selectedIndex else {
-            selectedID = windows.first?.id
-            return
-        }
-
-        let count = windows.count
-        let target: Int
-        switch direction {
-        case .left: target = current - 1
-        case .right: target = current + 1
-        case .up: target = current - columns
-        case .down: target = current + columns
-        case .next: target = (current + 1) % count
-        case .previous: target = (current - 1 + count) % count
-        }
-
-        // Arrow keys clamp at the edges; Tab already wrapped above.
-        guard windows.indices.contains(target) else { return }
-        selectedID = windows[target].id
+        guard let selectedID else { return nil }
+        return windows.first { $0.id == selectedID }
     }
 
     enum SelectionDirection {
         case left, right, up, down, next, previous
+    }
+
+    /// R5. Arrow keys can't use column arithmetic any more — once tiles are
+    /// placed freely there are no columns — so they pick the nearest tile in
+    /// the direction of travel instead.
+    func moveSelection(_ direction: SelectionDirection) {
+        guard !windows.isEmpty else { return }
+        guard let current = selectedWindow, let from = current.normalizedCenter else {
+            selectedID = readingOrder().first?.id
+            return
+        }
+
+        switch direction {
+        case .next, .previous:
+            let ordered = readingOrder()
+            guard let index = ordered.firstIndex(where: { $0.id == current.id }) else { return }
+            let step = direction == .next ? 1 : -1
+            selectedID = ordered[(index + step + ordered.count) % ordered.count].id
+        default:
+            if let target = nearest(to: from, going: direction) {
+                selectedID = target.id
+            }
+        }
+    }
+
+    /// Top-to-bottom, left-to-right. Rows are banded so tiles that are only
+    /// slightly offset still read as being on the same row.
+    private func readingOrder() -> [ManagedWindow] {
+        windows.sorted { lhs, rhs in
+            let a = lhs.normalizedCenter ?? .zero
+            let b = rhs.normalizedCenter ?? .zero
+            let bandA = (a.y * 8).rounded(.down)
+            let bandB = (b.y * 8).rounded(.down)
+            if bandA != bandB { return bandA < bandB }
+            if a.x != b.x { return a.x < b.x }
+            return lhs.id < rhs.id
+        }
+    }
+
+    private func nearest(to origin: CGPoint, going direction: SelectionDirection) -> ManagedWindow? {
+        var best: (window: ManagedWindow, cost: CGFloat)?
+
+        for window in windows where window.id != selectedID {
+            guard let center = window.normalizedCenter else { continue }
+            let dx = center.x - origin.x
+            let dy = center.y - origin.y
+
+            let along: CGFloat
+            let across: CGFloat
+            switch direction {
+            case .left: (along, across) = (-dx, abs(dy))
+            case .right: (along, across) = (dx, abs(dy))
+            case .up: (along, across) = (-dy, abs(dx))
+            case .down: (along, across) = (dy, abs(dx))
+            case .next, .previous: continue
+            }
+
+            // Must actually lie in the requested direction.
+            guard along > 0.005 else { continue }
+            // Weight sideways drift heavily so the selection prefers the tile
+            // in line with the current one over one that's merely nearer.
+            let cost = along + across * 2.5
+            if cost < (best?.cost ?? .greatestFiniteMagnitude) {
+                best = (window, cost)
+            }
+        }
+        return best?.window
     }
 
     // MARK: - Window actions
@@ -288,50 +408,23 @@ final class OverviewModel {
         }
     }
 
-    /// Optimistic removal — the poll would catch up within a second anyway,
-    /// but waiting that long feels broken.
     private func remove(id: CGWindowID) {
-        let index = windows.firstIndex { $0.id == id }
         windows.removeAll { $0.id == id }
-        advanceSelection(after: index)
+        advanceSelection()
     }
 
     private func removeWindows(ofPID pid: pid_t) {
-        let index = windows.firstIndex { $0.pid == pid }
         windows.removeAll { $0.pid == pid }
-        advanceSelection(after: index)
+        advanceSelection()
     }
 
-    private func advanceSelection(after removedIndex: Int?) {
+    private func advanceSelection() {
         if windows.isEmpty {
             selectedID = nil
             state = .empty
             return
         }
         if let selectedID, windows.contains(where: { $0.id == selectedID }) { return }
-        // Keep the cursor where the removed tile was, so repeated ⌘W walks
-        // forward through the grid instead of jumping to the start.
-        let fallback = min(removedIndex ?? 0, windows.count - 1)
-        selectedID = windows[max(0, fallback)].id
-    }
-
-    // MARK: - Reordering
-
-    /// R4: moving a tile takes effect now and is remembered for next time.
-    func move(id: CGWindowID, toIndexOf targetID: CGWindowID) {
-        guard id != targetID,
-              let from = windows.firstIndex(where: { $0.id == id }),
-              let to = windows.firstIndex(where: { $0.id == targetID })
-        else { return }
-
-        let window = windows.remove(at: from)
-        windows.insert(window, at: to)
-        selectedID = id
-        layoutStore.save(windows)
-    }
-
-    func resetLayout() {
-        layoutStore.reset()
-        windows = WindowEnumerator.autoArranged(windows)
+        selectedID = readingOrder().first?.id
     }
 }

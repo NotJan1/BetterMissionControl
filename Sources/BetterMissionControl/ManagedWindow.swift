@@ -23,6 +23,9 @@ struct ManagedWindow: Identifiable {
     /// Accessibility API reports, which is what makes window matching work.
     let frame: CGRect
     var thumbnail: CGImage?
+    /// Tile centre as a fraction of the overlay's size (0...1), once resolved
+    /// from either the saved layout or the automatic arrangement.
+    var normalizedCenter: CGPoint?
 
     var layoutKey: LayoutKey {
         LayoutKey(appID: bundleID ?? appName, title: title)
@@ -48,6 +51,7 @@ extension ManagedWindow: Equatable {
         lhs.id == rhs.id
             && lhs.title == rhs.title
             && lhs.frame == rhs.frame
+            && lhs.normalizedCenter == rhs.normalizedCenter
             && lhs.thumbnail.map(ObjectIdentifier.init) == rhs.thumbnail.map(ObjectIdentifier.init)
     }
 }

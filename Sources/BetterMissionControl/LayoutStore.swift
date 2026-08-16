@@ -1,13 +1,24 @@
+import CoreGraphics
 import Foundation
 
-/// Remembers the user's custom tile order between launches (R4).
+/// One remembered tile placement.
+struct LayoutEntry: Codable {
+    let key: LayoutKey
+    /// Tile centre as a fraction of the overlay's size (0...1).
+    ///
+    /// Normalised rather than absolute so a layout saved on one display still
+    /// makes sense on another, and survives a resolution change.
+    let center: CGPoint
+}
+
+/// Remembers where the user put each tile (R4).
 ///
-/// Stored as a plain JSON list of `LayoutKey`s in Application Support — small,
-/// inspectable, and trivially deletable if it ever gets into a bad state.
+/// Stored as JSON in Application Support — small, inspectable, and easy to
+/// delete if it ever gets into a bad state.
 @MainActor
 final class LayoutStore {
     private let fileURL: URL
-    private var order: [LayoutKey]
+    private var entries: [LayoutEntry]
 
     init() {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -16,41 +27,39 @@ final class LayoutStore {
         fileURL = base.appendingPathComponent("layout.json")
 
         if let data = try? Data(contentsOf: fileURL),
-           let decoded = try? JSONDecoder().decode([LayoutKey].self, from: data) {
-            order = decoded
+           let decoded = try? JSONDecoder().decode([LayoutEntry].self, from: data) {
+            entries = decoded
         } else {
-            order = []
+            entries = []
         }
     }
 
-    var hasSavedOrder: Bool { !order.isEmpty }
+    var isEmpty: Bool { entries.isEmpty }
 
-    /// Reorders `windows` to match the saved layout.
+    /// Saved centre for a window, if one was stored.
     ///
-    /// Saved entries whose window is no longer open are simply skipped, and
-    /// windows we've never seen keep their automatic-arrangement position at
-    /// the end — so the layout degrades gracefully instead of needing a reset.
-    func applyOrder(to windows: [ManagedWindow]) -> [ManagedWindow] {
-        guard !order.isEmpty else { return windows }
-
-        var remaining = windows
-        var arranged: [ManagedWindow] = []
-        for key in order {
-            guard let index = remaining.firstIndex(where: { $0.layoutKey == key }) else { continue }
-            arranged.append(remaining.remove(at: index))
+    /// `consumed` lets the caller resolve several windows that share a layout
+    /// key — two untitled windows of one app, say — by handing each a
+    /// different saved slot instead of stacking them all in one place.
+    func center(for key: LayoutKey, consumed: inout Set<Int>) -> CGPoint? {
+        for (index, entry) in entries.enumerated()
+        where entry.key == key && !consumed.contains(index) {
+            consumed.insert(index)
+            return entry.center
         }
-        arranged.append(contentsOf: remaining)
-        return arranged
+        return nil
     }
 
     func save(_ windows: [ManagedWindow]) {
-        order = windows.map(\.layoutKey)
-        guard let data = try? JSONEncoder().encode(order) else { return }
+        entries = windows.compactMap { window in
+            window.normalizedCenter.map { LayoutEntry(key: window.layoutKey, center: $0) }
+        }
+        guard let data = try? JSONEncoder().encode(entries) else { return }
         try? data.write(to: fileURL, options: .atomic)
     }
 
     func reset() {
-        order = []
+        entries = []
         try? FileManager.default.removeItem(at: fileURL)
     }
 }

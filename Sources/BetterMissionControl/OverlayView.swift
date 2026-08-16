@@ -1,8 +1,7 @@
 import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
-/// The full-screen overview: dimmed desktop behind a grid of window tiles.
+/// The full-screen overview: dimmed desktop behind freely placed window tiles.
 struct OverlayView: View {
     let model: OverviewModel
     let hotKeyDisplay: String
@@ -67,54 +66,36 @@ struct OverlayView: View {
         case .missingPermissions(let permissions):
             PermissionsNoticeView(permissions: permissions, onDismiss: onDismiss)
         case .ready:
-            grid(in: size)
+            canvas(in: size)
         }
     }
 
-    private func grid(in size: CGSize) -> some View {
-        let columns = OverlayLayout.columnCount(for: model.windows.count, in: size)
-        let cell = OverlayLayout.cellSize(count: model.windows.count, columns: columns, in: size)
-        let rows = model.windows.chunked(into: columns)
+    /// R4: a free canvas rather than a grid — every tile sits at its own
+    /// position and can be dragged anywhere inside the overlay.
+    private func canvas(in size: CGSize) -> some View {
+        let cell = model.tileSize(in: size)
 
-        return ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: OverlayLayout.spacing) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    HStack(spacing: OverlayLayout.spacing) {
-                        ForEach(row) { window in
-                            tile(for: window)
-                                .frame(width: cell.width, height: cell.height)
-                        }
-                        // Keeps a short final row left-aligned with the rows
-                        // above it instead of centring it on its own.
-                        if row.count < columns {
-                            Spacer(minLength: 0)
-                                .frame(
-                                    width: CGFloat(columns - row.count)
-                                        * (cell.width + OverlayLayout.spacing)
-                                )
-                        }
-                    }
-                }
-            }
-            .padding(OverlayLayout.outerPadding)
-            .frame(maxWidth: .infinity)
-            // R9 again: gaps *between* tiles belong to the scroll view, which
-            // would otherwise swallow the click before it reaches the
-            // dismiss layer underneath.
-            .background {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture(perform: onDismiss)
+        return ZStack(alignment: .topLeading) {
+            ForEach(model.windows) { window in
+                tile(for: window, in: size)
+                    .frame(width: cell.width, height: cell.height)
+                    .position(model.center(for: window, in: size))
+                    .zIndex(model.draggingID == window.id ? 1 : 0)
             }
         }
-        .scrollBounceBehavior(.basedOnSize)
+        .frame(width: size.width, height: size.height)
+        // Tiles are no longer animated into place by a stack layout, so the
+        // automatic arrangement settling in gets a gentle move of its own.
+        .animation(.easeOut(duration: 0.18), value: model.windows.count)
     }
 
-    private func tile(for window: ManagedWindow) -> some View {
-        WindowTileView(
+    private func tile(for window: ManagedWindow, in size: CGSize) -> some View {
+        let isDragging = model.draggingID == window.id
+        return WindowTileView(
             window: window,
             isSelected: model.selectedID == window.id,
             isHovering: model.hoveredID == window.id,
+            isDragging: isDragging,
             onHover: { inside in
                 if inside {
                     model.hoveredID = window.id
@@ -125,30 +106,20 @@ struct OverlayView: View {
             onActivate: { onActivate(window) },
             onClose: { model.close(window) }
         )
-        // R4: drag a tile onto another to take its place in the order.
-        .draggable(String(window.id)) {
-            dragPreview(for: window)
-        }
-        .dropDestination(for: String.self) { items, _ in
-            guard let raw = items.first, let draggedID = CGWindowID(raw) else { return false }
-            model.move(id: draggedID, toIndexOf: window.id)
-            return true
-        }
+        .gesture(dragGesture(for: window, in: size))
     }
 
-    private func dragPreview(for window: ManagedWindow) -> some View {
-        Group {
-            if let image = window.thumbnail {
-                Image(decorative: image, scale: 2, orientation: .up)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-            } else {
-                RoundedRectangle(cornerRadius: OverlayLayout.cornerRadius)
-                    .fill(Color.gray.opacity(0.6))
+    /// `minimumDistance` is what separates a click-to-activate from a drag —
+    /// below it the tile's own tap gesture wins.
+    private func dragGesture(for window: ManagedWindow, in size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 6)
+            .onChanged { value in
+                model.beginDrag(window)
+                model.updateDrag(window, translation: value.translation, in: size)
             }
-        }
-        .frame(width: 180)
-        .opacity(0.85)
+            .onEnded { _ in
+                model.endDrag()
+            }
     }
 
     private func banner(_ text: String) -> some View {

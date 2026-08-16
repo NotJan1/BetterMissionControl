@@ -93,6 +93,62 @@ enum SelfTest {
             exit(0)
         }
 
+        // Free-form positioning: drag a tile, then confirm the exact position
+        // was kept and written to disk.
+        if mode == "drag" {
+            guard let targetApp else { log("FAIL: set BMC_SELFTEST_APP"); exit(1) }
+            let controller = OverlayController()
+            controller.show()
+            try? await Task.sleep(for: .seconds(2))
+            let model = controller.debugModel
+            let size = model.overlaySize
+            log("overlay size=\(Int(size.width))x\(Int(size.height)) windows=\(model.windows.count)")
+            for window in model.windows {
+                log("  '\(window.appName)' center=\(describe(window.normalizedCenter))")
+            }
+            guard let target = model.windows.first(where: { $0.appName == targetApp }) else {
+                log("FAIL: no window for '\(targetApp)'"); exit(1)
+            }
+            let before = target.normalizedCenter
+            log("dragging '\(target.appName)' from \(describe(before))")
+
+            model.beginDrag(target)
+            model.updateDrag(target, translation: CGSize(width: -260, height: 180), in: size)
+            model.endDrag()
+
+            let after = model.windows.first { $0.id == target.id }?.normalizedCenter
+            log("after drag center=\(describe(after))")
+            log(before == after ? "RESULT: position UNCHANGED (drag failed)" : "RESULT: position moved")
+
+            // A grid would have snapped to a column; a free canvas should not.
+            if let after {
+                let automatic = OverlayLayout.automaticCenters(count: model.windows.count, in: size)
+                let snapped = automatic.contains { abs($0.x - after.x) < 0.001 && abs($0.y - after.y) < 0.001 }
+                log(snapped ? "RESULT: SNAPPED to a grid slot" : "RESULT: free position (no grid snap)")
+            }
+
+            let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("BetterMissionControl/layout.json")
+            if let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) {
+                log("layout.json: \(text.prefix(400))")
+            } else {
+                log("RESULT: layout.json NOT written")
+            }
+            exit(0)
+        }
+
+        // Reopens the overlay and reports where tiles landed — run after
+        // "drag" to confirm a custom layout survives between sessions.
+        if mode == "persist" {
+            let controller = OverlayController()
+            controller.show()
+            try? await Task.sleep(for: .seconds(2))
+            for window in controller.debugModel.windows {
+                log("restored '\(window.appName)' '\(window.title)' center=\(describe(window.normalizedCenter))")
+            }
+            exit(0)
+        }
+
         guard mode != "list" else { exit(0) }
 
         guard let targetApp else {
@@ -125,6 +181,11 @@ enum SelfTest {
             exit(1)
         }
         exit(0)
+    }
+
+    private static func describe(_ point: CGPoint?) -> String {
+        guard let point else { return "nil" }
+        return String(format: "(%.3f, %.3f)", point.x, point.y)
     }
 
     private static func shortFrame(_ r: CGRect) -> String {

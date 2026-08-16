@@ -51,11 +51,17 @@ at once.
 | ⌘M | Minimize it (its tile disappears) |
 | ⌘Q | Quit the owning app and all its tiles |
 | Esc, or click the background | Dismiss with nothing changed |
-| Drag a tile onto another | Reorder — remembered for next time |
+| Drag a tile | Move it anywhere in the overlay — remembered for next time |
 
-Layout is saved to
-`~/Library/Application Support/BetterMissionControl/layout.json`. Menu bar icon
-→ **Reset Saved Layout** returns to the automatic app-grouped arrangement.
+Tiles aren't constrained to a grid: drag one wherever you want it and that
+exact spot is restored next time. Arrow keys pick the nearest tile in the
+direction you press, so navigation still works however you've arranged things.
+
+Positions are saved to
+`~/Library/Application Support/BetterMissionControl/layout.json`, normalised to
+a fraction of the screen so a layout still makes sense on a different display
+or after a resolution change. Menu bar icon → **Reset Saved Layout** returns to
+the automatic app-grouped arrangement.
 
 ### Remapping the hotkey
 

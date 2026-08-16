@@ -6,6 +6,7 @@ struct WindowTileView: View {
     let window: ManagedWindow
     let isSelected: Bool
     let isHovering: Bool
+    let isDragging: Bool
     let onHover: (Bool) -> Void
     let onActivate: () -> Void
     let onClose: () -> Void
@@ -49,10 +50,17 @@ struct WindowTileView: View {
         .aspectRatio(window.aspectRatio, contentMode: .fit)
         .overlay(selectionRing)
         .overlay(alignment: .topLeading) { closeButton }
-        .shadow(color: .black.opacity(0.45), radius: isSelected ? 18 : 11, y: isSelected ? 8 : 5)
-        .scaleEffect(isHovering && !isSelected ? 1.02 : 1)
+        // Lifting the tile while it's dragged makes it read as picked up,
+        // which matters more now that tiles can overlap.
+        .shadow(
+            color: .black.opacity(isDragging ? 0.6 : 0.45),
+            radius: isDragging ? 26 : (isSelected ? 18 : 11),
+            y: isDragging ? 14 : (isSelected ? 8 : 5)
+        )
+        .scaleEffect(isDragging ? 1.05 : (isHovering && !isSelected ? 1.02 : 1))
         .animation(.easeOut(duration: 0.12), value: isHovering)
         .animation(.easeOut(duration: 0.14), value: isSelected)
+        .animation(.easeOut(duration: 0.12), value: isDragging)
     }
 
     private var placeholder: some View {
