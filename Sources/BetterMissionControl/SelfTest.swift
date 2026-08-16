@@ -489,6 +489,13 @@ enum SelfTest {
             exit(0)
         }
 
+        // Keyboard only — every route F3 could still be catchable on.
+        if mode == "keys" {
+            let seconds = Int(env["BMC_SELFTEST_SECONDS"] ?? "12") ?? 12
+            await InputProbe.runKeysOnly(seconds: seconds)
+            exit(0)
+        }
+
         // Swipe recognition, driven with synthetic contact frames using the
         // velocities the guided probe actually measured on this hardware.
         if mode == "gesture" {

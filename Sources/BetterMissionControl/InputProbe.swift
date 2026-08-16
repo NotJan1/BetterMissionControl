@@ -111,6 +111,94 @@ enum InputProbe {
 
     private static func fmt(_ value: Float) -> String { String(format: "%+.3f", value) }
 
+    // MARK: - Keyboard-only probe
+
+    /// Tests every place F3 could still be catchable, in one 12-second run.
+    ///
+    /// A session tap sits *after* the WindowServer, so anything it swallows —
+    /// F3 among them — never arrives. A HID tap sits before it, which is the
+    /// gap worth checking before concluding a driver is the only option.
+    static func runKeysOnly(seconds: Int) async {
+        note("Accessibility granted: \(AXIsProcessTrusted())")
+        Bucket.reset()
+
+        let hidTap = makeTap(at: .cghidEventTap, callback: { _, type, event, _ in
+            recordKey(type: type, event: event, into: .hid)
+            return Unmanaged.passUnretained(event)
+        })
+        note("HID tap (before the WindowServer): \(hidTap ? "created" : "FAILED to create")")
+
+        let sessionTap = makeTap(at: .cgSessionEventTap, callback: { _, type, event, _ in
+            recordKey(type: type, event: event, into: .session)
+            return Unmanaged.passUnretained(event)
+        })
+        note("session tap (after the WindowServer): \(sessionTap ? "created" : "FAILED to create")")
+
+        for mask in [NSEvent.EventTypeMask.keyDown, .systemDefined] {
+            if let monitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { event in
+                if event.type == .systemDefined, event.subtype.rawValue == 8 {
+                    Bucket.monitorKeys.insert(Int((event.data1 & 0xFFFF_0000) >> 16))
+                } else if event.type == .keyDown {
+                    Bucket.monitorKeys.insert(Int(event.keyCode))
+                }
+            } {
+                monitors.append(monitor)
+            }
+        }
+        note("global NSEvent monitors: \(monitors.count)/2")
+
+        note("")
+        note(">>> Press F3 several times — \(seconds)s")
+        for remaining in stride(from: seconds, to: 0, by: -4) {
+            try? await Task.sleep(for: .seconds(4))
+            note("    \(remaining - 4)s")
+        }
+
+        note("")
+        note("RESULTS:")
+        report(route: "HID tap    ", plain: Bucket.hidPlain, system: Bucket.hidSystem)
+        report(route: "session tap", plain: Bucket.sessionPlain, system: Bucket.sessionSystem)
+        note("  NSEvent monitor: \(Bucket.monitorKeys.isEmpty ? "nothing" : "codes \(Bucket.monitorKeys.sorted())")")
+
+        let anything = !Bucket.hidPlain.isEmpty || !Bucket.hidSystem.isEmpty
+            || !Bucket.sessionPlain.isEmpty || !Bucket.sessionSystem.isEmpty
+            || !Bucket.monitorKeys.isEmpty
+        note("")
+        note(anything
+             ? "VERDICT: something is catchable — see which route above."
+             : "VERDICT: F3 reaches nothing. The WindowServer consumes it entirely.")
+    }
+
+    private static func report(route: String, plain: Set<Int>, system: Set<Int>) {
+        var parts: [String] = []
+        if plain.contains(kVK_F3) { parts.append("F3 AS A PLAIN KEY") }
+        let otherPlain = plain.subtracting([kVK_F3])
+        if !otherPlain.isEmpty { parts.append("plain codes \(otherPlain.sorted())") }
+        for code in system.sorted() { parts.append("system-defined \(code) (\(nxKeyName(code)))") }
+        note("  \(route): \(parts.isEmpty ? "nothing" : parts.joined(separator: ", "))")
+    }
+
+    private static func makeTap(
+        at location: CGEventTapLocation,
+        callback: @escaping CGEventTapCallBack
+    ) -> Bool {
+        let mask: CGEventMask = (1 << CGEventType.keyDown.rawValue) | (1 << 14)
+        guard let tap = CGEvent.tapCreate(
+            tap: location,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: mask,
+            callback: callback,
+            userInfo: nil
+        ) else { return false }
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        return true
+    }
+
+    enum Route { case hid, session }
+
     // MARK: - Routes
 
     private static func startEventTap() {
@@ -183,6 +271,11 @@ enum InputProbe {
         nonisolated(unsafe) static var maxTouches = 0
         nonisolated(unsafe) static var everSawFour = false
         nonisolated(unsafe) static var sawPublicMultiFinger = false
+        nonisolated(unsafe) static var hidPlain: Set<Int> = []
+        nonisolated(unsafe) static var hidSystem: Set<Int> = []
+        nonisolated(unsafe) static var sessionPlain: Set<Int> = []
+        nonisolated(unsafe) static var sessionSystem: Set<Int> = []
+        nonisolated(unsafe) static var monitorKeys: Set<Int> = []
 
         /// Cleared between phases so each instruction is measured on its own.
         static func reset() {
@@ -208,6 +301,27 @@ enum InputProbe {
 
     nonisolated fileprivate static func note(_ message: String) {
         FileHandle.standardError.write(Data("PROBE: \(message)\n".utf8))
+    }
+}
+
+/// Records a key into whichever tap saw it.
+func recordKey(type: CGEventType, event: CGEvent, into route: InputProbe.Route) {
+    if type == .keyDown {
+        let code = Int(event.getIntegerValueField(.keyboardEventKeycode))
+        switch route {
+        case .hid: InputProbe.Bucket.hidPlain.insert(code)
+        case .session: InputProbe.Bucket.sessionPlain.insert(code)
+        }
+        return
+    }
+    guard type.rawValue == 14,
+          let nsEvent = NSEvent(cgEvent: event),
+          nsEvent.subtype.rawValue == 8,
+          ((nsEvent.data1 & 0x0000_FF00) >> 8) == 0x0A else { return }
+    let code = Int((nsEvent.data1 & 0xFFFF_0000) >> 16)
+    switch route {
+    case .hid: InputProbe.Bucket.hidSystem.insert(code)
+    case .session: InputProbe.Bucket.sessionSystem.insert(code)
     }
 }
 
