@@ -16,8 +16,9 @@ final class SettingsWindowController {
     ) {
         model = SettingsModel(hotKeyManager: hotKeyManager, onHotKeyChanged: onHotKeyChanged)
         model.onGesture = onGesture
-        // Restore the toggle's effect across launches.
+        // Restore both toggles' effects across launches.
         model.applyTrackpadGesture()
+        model.applyMissionControlKey()
     }
 
     func show() {
@@ -28,7 +29,7 @@ final class SettingsWindowController {
         }
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 700),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -66,6 +67,38 @@ final class SettingsModel {
 
     private enum DefaultsKey {
         static let trackpadGesture = "TrackpadGestureEnabled"
+        static let missionControlKey = "MissionControlKeyEnabled"
+    }
+
+    /// Off by default — it swallows a system key, so it's opted into.
+    var missionControlKeyEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: DefaultsKey.missionControlKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: DefaultsKey.missionControlKey)
+            applyMissionControlKey()
+        }
+    }
+
+    private(set) var f3Status: String?
+    private(set) var f3StatusIsWarning = false
+
+    func applyMissionControlKey() {
+        guard missionControlKeyEnabled else {
+            MissionControlKeyTap.shared.stop()
+            f3Status = nil
+            return
+        }
+        let started = MissionControlKeyTap.shared.start { [weak self] in
+            self?.onGesture?()
+        }
+        if started {
+            f3Status = "F3 now opens this instead of Mission Control."
+            f3StatusIsWarning = false
+        } else {
+            f3Status = MissionControlKeyTap.shared.lastError ?? "Couldn't take over the F3 key."
+            f3StatusIsWarning = true
+            UserDefaults.standard.set(false, forKey: DefaultsKey.missionControlKey)
+        }
     }
 
     /// Off by default: it's the one feature built on a private framework, so
@@ -248,6 +281,8 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     hotKeySection
                     Divider()
+                    functionKeySection
+                    Divider()
                     trackpadSection
                     Divider()
                     missionControlSection
@@ -264,7 +299,7 @@ struct SettingsView: View {
             }
             .padding(16)
         }
-        .frame(width: 560, height: 620)
+        .frame(width: 560, height: 700)
     }
 
     // MARK: - Hotkey
@@ -317,6 +352,40 @@ struct SettingsView: View {
                     in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                 )
             }
+        }
+    }
+
+    // MARK: - F3 key
+
+    private var functionKeySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(isOn: Binding(
+                get: { model.missionControlKeyEnabled },
+                set: { model.missionControlKeyEnabled = $0 }
+            )) {
+                Text("Open with the F3 key")
+                    .font(.system(size: 15, weight: .semibold))
+            }
+            .toggleStyle(.switch)
+
+            Text("Takes F3 for this app and stops macOS opening its own Mission Control. Nothing in System Settings needs changing, and every other function key — brightness, volume — keeps working exactly as before.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let status = model.f3Status {
+                HStack(spacing: 6) {
+                    Image(systemName: model.f3StatusIsWarning
+                          ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(model.f3StatusIsWarning ? .orange : .green)
+                    Text(status).font(.system(size: 12))
+                }
+            }
+
+            Text("Unticking Mission Control in Keyboard Shortcuts does not free up F3 — that setting only controls the ⌘↑ combination. The F3 key itself is claimed further down, which is why this intercepts it directly.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

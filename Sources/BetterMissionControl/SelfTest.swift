@@ -489,6 +489,28 @@ enum SelfTest {
             exit(0)
         }
 
+        // Can the consuming tap actually be placed? Interception itself needs
+        // a real keypress, but placement is checkable on its own.
+        if mode == "f3" {
+            var fired = 0
+            let started = MissionControlKeyTap.shared.start { fired += 1 }
+            log("consuming HID tap started: \(started)")
+            if !started {
+                log("FAIL: \(MissionControlKeyTap.shared.lastError ?? "unknown")")
+                exit(1)
+            }
+            log("running=\(MissionControlKeyTap.shared.isRunning)")
+            log("press F3 now — 10s")
+            try? await Task.sleep(for: .seconds(10))
+            log("F3 presses intercepted: \(fired)")
+            log(fired > 0
+                ? "RESULT: F3 is being intercepted"
+                : "RESULT: no F3 seen (press it during the window to confirm)")
+            MissionControlKeyTap.shared.stop()
+            log("stopped cleanly: \(!MissionControlKeyTap.shared.isRunning)")
+            exit(0)
+        }
+
         // Keyboard only — every route F3 could still be catchable on.
         if mode == "keys" {
             let seconds = Int(env["BMC_SELFTEST_SECONDS"] ?? "12") ?? 12

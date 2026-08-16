@@ -101,10 +101,22 @@ Control → Off), or both open at once. That isn't a preference: reading contact
 is passive, so the swipe can be observed but never taken, and macOS acts on it
 regardless. Settings says so and links straight to the pane.
 
-### Making this your Mission Control
+### The F3 key
 
-The Settings page also walks through freeing up F3, with a deep-link to
-Keyboard Shortcuts → Mission Control.
+Settings has a switch for it. Turn it on and F3 opens this instead of Apple's
+Mission Control — nothing in System Settings needs changing, and brightness,
+volume and the other function keys keep working exactly as before.
+
+**Unticking "Mission Control" in Keyboard Shortcuts does not free up F3.** That
+setting only governs the key *combination* (⌘↑ or ⌃↑); the function-row key is
+claimed further down the stack, which is why unticking it changes nothing.
+
+The route was found by measurement. Pressing F3 emits a plain key event with
+virtual code 160, and it is visible at a **HID tap** — which sits *before* the
+WindowServer. A tap there can swallow the event, so macOS never acts on it. A
+session tap, which is where the first attempt looked, sits after the
+WindowServer and is too late to stop anything. Needs Accessibility, which the
+app already requires; no extra permission and no driver.
 
 ## How it's built
 
