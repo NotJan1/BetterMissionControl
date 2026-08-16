@@ -52,6 +52,25 @@ Control's own ⌃↑ so both don't fire at once.
 | ⌘Q | Quit the owning app and all its tiles |
 | Esc, or click the background | Dismiss with nothing changed |
 | Drag a tile | Move it anywhere in the overlay — remembered for next time |
+| Middle-click a tile | Close that window |
+| Hover a tile | Reveals its window controls |
+
+Each tile shows four controls on hover or selection, following AltTab's
+arrangement — purple first, then the window's own traffic lights:
+
+| | |
+|---|---|
+| 🟣 Power | Force quit the app — **unsaved work is lost, with no prompt** |
+| 🔴 Close | Close that window |
+| 🟡 Minimize | Minimize it |
+| 🟢 Zoom | Press the window's green button |
+
+⌘Q remains the polite quit: the app runs its normal shutdown and can prompt
+about unsaved work. The purple button deliberately does not.
+
+Middle-click closes a window without aiming for the red dot. If you run
+something like MiddleClick, a three-finger click becomes a real middle click,
+so a three-finger click on a tile closes it — no special support needed.
 
 Tiles aren't constrained to a grid: drag one wherever you want it and that
 exact spot is restored next time. Arrow keys pick the nearest tile in the
@@ -95,6 +114,11 @@ read trackpad contacts directly through `MultitouchSupport`, which is what
 BetterTouchTool and Swish do. That's confined to
 [MultitouchBridge.swift](Sources/BetterMissionControl/MultitouchBridge.swift) —
 see Notable decisions.
+
+Swipe **up** to open the overview and **down** to dismiss it, mirroring
+Mission Control. The two thresholds are deliberately different: the guided
+probe measured a swipe up at about +2.07 mean velocity but a swipe down at only
+-0.58, so a single symmetric threshold would never catch a downward swipe.
 
 **You must turn Apple's own gesture off** (Trackpad → More Gestures → Mission
 Control → Off), or both open at once. That isn't a preference: reading contacts

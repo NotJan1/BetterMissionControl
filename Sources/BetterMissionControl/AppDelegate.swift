@@ -35,7 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings = SettingsWindowController(
             hotKeyManager: hotKeyManager,
             onHotKeyChanged: { [weak self] in self?.hotKeyDidChange() },
-            onGesture: { [weak self] in self?.overlay.toggle() }
+            onGesture: { [weak self] in self?.overlay.toggle() },
+            // Mirrors Mission Control: up opens, down dismisses.
+            onGestureUp: { [weak self] in self?.overlay.show() },
+            onGestureDown: { [weak self] in self?.overlay.hide() }
         )
         overlay.onOpenSettings = { [weak self] in self?.showSettings() }
 

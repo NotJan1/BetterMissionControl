@@ -13,6 +13,9 @@ struct WindowTileView: View {
     let onHover: (Bool) -> Void
     let onActivate: () -> Void
     let onClose: () -> Void
+    let onMinimize: () -> Void
+    let onZoom: () -> Void
+    let onForceQuit: () -> Void
 
     /// The close badge is revealed on hover or selection, the way Mission
     /// Control reveals its own controls, rather than cluttering every tile.
@@ -87,21 +90,65 @@ struct WindowTileView: View {
             )
     }
 
-    /// R7: works without the tile being selected first.
+    /// The window's own traffic lights, plus one macOS doesn't offer.
+    ///
+    /// R7: each works without selecting the tile first.
     private var closeButton: some View {
-        Button(action: onClose) {
-            Image(systemName: "xmark.circle.fill")
-                .font(.system(size: 19, weight: .medium))
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(Color.white, Color.black.opacity(0.65))
-                .background(Circle().fill(.black.opacity(0.35)).padding(2))
+        // Order, colours and glyphs follow AltTab: the extra purple control
+        // sits to the *left* of the standard three, so the familiar traffic
+        // lights keep their usual relative positions.
+        HStack(spacing: 7) {
+            trafficLight(
+                color: Color(red: 0.66, green: 0.29, blue: 0.92),
+                symbol: "power",
+                help: "Force quit \(window.appName) — unsaved work is lost",
+                action: onForceQuit
+            )
+            trafficLight(
+                color: Color(red: 0.96, green: 0.34, blue: 0.29),
+                symbol: "xmark",
+                help: "Close this window",
+                action: onClose
+            )
+            trafficLight(
+                color: Color(red: 0.78, green: 0.58, blue: 0.09),
+                symbol: "minus",
+                help: "Minimize this window",
+                action: onMinimize
+            )
+            trafficLight(
+                color: Color(red: 0.23, green: 0.77, blue: 0.29),
+                symbol: "arrow.up.left.and.arrow.down.right",
+                help: "Zoom this window",
+                action: onZoom
+            )
         }
-        .buttonStyle(.plain)
-        .padding(6)
+        .padding(8)
         .opacity(showsCloseButton ? 1 : 0)
         .animation(.easeOut(duration: 0.12), value: showsCloseButton)
-        .help("Close this window")
-        .accessibilityLabel("Close \(window.displayTitle)")
+    }
+
+    private func trafficLight(
+        color: Color,
+        symbol: String,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Circle()
+                .fill(color)
+                .frame(width: 17, height: 17)
+                .overlay {
+                    Image(systemName: symbol)
+                        .font(.system(size: 10, weight: .heavy))
+                        .foregroundStyle(.black.opacity(0.7))
+                }
+                .overlay(Circle().strokeBorder(.black.opacity(0.22), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel("\(help), \(window.displayTitle)")
     }
 
     // MARK: - Label

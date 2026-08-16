@@ -21,19 +21,28 @@ final class TrackpadGestureMonitor {
 
     private(set) var isRunning = false
     private var onSwipeUp: (() -> Void)?
+    private var onSwipeDown: (() -> Void)?
 
     var lastError: String? { MultitouchBridge.lastError }
 
     @discardableResult
-    func start(onSwipeUp: @escaping () -> Void) -> Bool {
+    func start(
+        onSwipeUp: @escaping () -> Void,
+        onSwipeDown: @escaping () -> Void
+    ) -> Bool {
         guard !isRunning else { return true }
         self.onSwipeUp = onSwipeUp
+        self.onSwipeDown = onSwipeDown
 
         SwipeRecognizer.reset()
-        SwipeRecognizer.fire = {
+        SwipeRecognizer.fire = { direction in
             // The contact callback runs off the main actor.
             Task { @MainActor in
-                TrackpadGestureMonitor.shared.onSwipeUp?()
+                let monitor = TrackpadGestureMonitor.shared
+                switch direction {
+                case .up: monitor.onSwipeUp?()
+                case .down: monitor.onSwipeDown?()
+                }
             }
         }
 
@@ -48,6 +57,7 @@ final class TrackpadGestureMonitor {
         MultitouchBridge.stop()
         SwipeRecognizer.fire = nil
         onSwipeUp = nil
+        onSwipeDown = nil
         isRunning = false
     }
 }
@@ -55,11 +65,15 @@ final class TrackpadGestureMonitor {
 /// State for the recogniser. At file scope because the contact callback is a C
 /// function pointer and can't capture anything.
 enum SwipeRecognizer {
-    /// Measured on real hardware with the guided probe: a four-finger swipe up
-    /// averages about +2.07 normalised vertical velocity, a swipe down about
-    /// -0.58. This sits well above the noise of fingers merely resting, and
-    /// well below a deliberate swipe.
-    static let triggerVelocity: Float = 0.6
+    enum Direction { case up, down }
+
+    /// Thresholds are asymmetric because the measurements were. The guided
+    /// probe recorded a four-finger swipe up at about +2.07 mean normalised
+    /// velocity but a swipe down at only -0.58 — swiping down is a gentler
+    /// motion. A single symmetric threshold set for "up" would simply never
+    /// catch a "down".
+    static let upVelocity: Float = 0.6
+    static let downVelocity: Float = -0.35
     /// Consecutive qualifying frames required, so a stray flick doesn't count.
     static let framesRequired = 3
     /// Contacts must fall away before another swipe can fire, which stops one
@@ -67,12 +81,14 @@ enum SwipeRecognizer {
     static let minimumInterval: TimeInterval = 0.5
 
     nonisolated(unsafe) static var consecutiveFrames = 0
+    nonisolated(unsafe) static var currentDirection: Direction?
     nonisolated(unsafe) static var armed = true
     nonisolated(unsafe) static var lastFired = Date.distantPast
-    nonisolated(unsafe) static var fire: (() -> Void)?
+    nonisolated(unsafe) static var fire: ((Direction) -> Void)?
 
     static func reset() {
         consecutiveFrames = 0
+        currentDirection = nil
         armed = true
         lastFired = .distantPast
     }
@@ -81,13 +97,30 @@ enum SwipeRecognizer {
         // Fewer than four fingers ends the gesture and re-arms it.
         guard touchCount >= 4 else {
             consecutiveFrames = 0
+            currentDirection = nil
             armed = true
             return
         }
 
-        guard meanVelocityY > triggerVelocity else {
+        let direction: Direction?
+        if meanVelocityY > upVelocity {
+            direction = .up
+        } else if meanVelocityY < downVelocity {
+            direction = .down
+        } else {
+            direction = nil
+        }
+
+        guard let direction else {
             consecutiveFrames = 0
             return
+        }
+
+        // A reversal mid-gesture starts the count again rather than adding to
+        // the tally for the other direction.
+        if direction != currentDirection {
+            currentDirection = direction
+            consecutiveFrames = 0
         }
 
         consecutiveFrames += 1
@@ -98,7 +131,7 @@ enum SwipeRecognizer {
 
         armed = false
         lastFired = Date()
-        fire?()
+        fire?(direction)
     }
 }
 

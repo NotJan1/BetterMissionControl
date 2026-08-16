@@ -12,10 +12,14 @@ final class SettingsWindowController {
     init(
         hotKeyManager: HotKeyManager,
         onHotKeyChanged: @escaping () -> Void,
-        onGesture: @escaping () -> Void
+        onGesture: @escaping () -> Void,
+        onGestureUp: @escaping () -> Void,
+        onGestureDown: @escaping () -> Void
     ) {
         model = SettingsModel(hotKeyManager: hotKeyManager, onHotKeyChanged: onHotKeyChanged)
         model.onGesture = onGesture
+        model.onGestureUp = onGestureUp
+        model.onGestureDown = onGestureDown
         // Restore both toggles' effects across launches.
         model.applyTrackpadGesture()
         model.applyMissionControlKey()
@@ -122,11 +126,12 @@ final class SettingsModel {
             trackpadStatus = nil
             return
         }
-        let started = TrackpadGestureMonitor.shared.start { [weak self] in
-            self?.onGesture?()
-        }
+        let started = TrackpadGestureMonitor.shared.start(
+            onSwipeUp: { [weak self] in self?.onGestureUp?() },
+            onSwipeDown: { [weak self] in self?.onGestureDown?() }
+        )
         if started {
-            trackpadStatus = "Listening for four-finger swipes."
+            trackpadStatus = "Swipe up to open, down to close."
             trackpadStatusIsWarning = false
         } else {
             trackpadStatus = TrackpadGestureMonitor.shared.lastError
@@ -136,8 +141,10 @@ final class SettingsModel {
         }
     }
 
-    /// Set by the app delegate — what a recognised swipe should do.
+    /// Set by the app delegate — what recognised input should do.
     var onGesture: (() -> Void)?
+    var onGestureUp: (() -> Void)?
+    var onGestureDown: (() -> Void)?
 
     init(hotKeyManager: HotKeyManager, onHotKeyChanged: @escaping () -> Void) {
         self.hotKeyManager = hotKeyManager

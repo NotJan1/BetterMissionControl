@@ -260,7 +260,8 @@ enum SelfTest {
             let manager = HotKeyManager {}
             manager.register()
             let controller = SettingsWindowController(
-                hotKeyManager: manager, onHotKeyChanged: {}, onGesture: {}
+                hotKeyManager: manager, onHotKeyChanged: {},
+                onGesture: {}, onGestureUp: {}, onGestureDown: {}
             )
             controller.show()
             try? await Task.sleep(for: .seconds(2))
@@ -521,48 +522,58 @@ enum SelfTest {
         // Swipe recognition, driven with synthetic contact frames using the
         // velocities the guided probe actually measured on this hardware.
         if mode == "gesture" {
-            var fired = 0
+            var ups = 0
+            var downs = 0
             SwipeRecognizer.reset()
-            SwipeRecognizer.fire = { fired += 1 }
+            SwipeRecognizer.fire = { direction in
+                switch direction {
+                case .up: ups += 1
+                case .down: downs += 1
+                }
+            }
 
             func feed(_ frames: Int, touches: Int, velocity: Float) {
                 for _ in 0 ..< frames {
                     SwipeRecognizer.handle(touchCount: touches, meanVelocityY: velocity)
                 }
             }
+            /// Fingers lift and the re-arm interval passes.
+            func release() async {
+                feed(3, touches: 0, velocity: 0)
+                try? await Task.sleep(for: .milliseconds(600))
+            }
+            func check(_ label: String, _ condition: Bool) {
+                log("\(label) -> up=\(ups) down=\(downs) \(condition ? "OK" : "WRONG")")
+            }
 
-            // A real swipe up measured about +2.07.
+            // Measured velocities: up about +2.07, down about -0.58.
             feed(8, touches: 4, velocity: 2.07)
-            log("four-finger swipe up -> fired \(fired) time(s) \(fired == 1 ? "OK" : "WRONG")")
+            check("swipe up", ups == 1 && downs == 0)
 
-            // Still swiping: one gesture must not retrigger.
             feed(20, touches: 4, velocity: 2.07)
-            log("held through a long swipe -> total \(fired) \(fired == 1 ? "OK (no retrigger)" : "WRONG")")
+            check("held through a long swipe", ups == 1 && downs == 0)
 
-            // Fingers lift, then a second deliberate swipe.
-            feed(3, touches: 0, velocity: 0)
-            try? await Task.sleep(for: .milliseconds(600))
-            feed(8, touches: 4, velocity: 2.07)
-            log("second swipe after lifting -> total \(fired) \(fired == 2 ? "OK" : "WRONG")")
+            await release()
+            feed(8, touches: 4, velocity: -0.58)
+            check("swipe down", ups == 1 && downs == 1)
 
-            // A swipe down measured about -0.58 and must never fire.
-            let before = fired
-            feed(3, touches: 0, velocity: 0)
-            try? await Task.sleep(for: .milliseconds(600))
-            feed(12, touches: 4, velocity: -0.58)
-            log("swipe down -> fired \(fired - before) time(s) \(fired == before ? "OK (ignored)" : "WRONG")")
+            await release()
+            feed(20, touches: 4, velocity: -0.58)
+            check("held through a long swipe down", ups == 1 && downs == 2)
 
-            // Three fingers is a different gesture and isn't ours.
-            feed(3, touches: 0, velocity: 0)
-            try? await Task.sleep(for: .milliseconds(600))
+            await release()
             feed(12, touches: 3, velocity: 2.07)
-            log("three-finger swipe up -> fired \(fired - before) time(s) \(fired == before ? "OK (ignored)" : "WRONG")")
+            check("three-finger swipe up (ignored)", ups == 1 && downs == 2)
 
-            // Resting fingers drift slightly and must not count.
-            feed(3, touches: 0, velocity: 0)
-            try? await Task.sleep(for: .milliseconds(600))
+            await release()
             feed(30, touches: 4, velocity: 0.15)
-            log("four fingers resting -> fired \(fired - before) time(s) \(fired == before ? "OK (ignored)" : "WRONG")")
+            check("four fingers resting (ignored)", ups == 1 && downs == 2)
+
+            // A reversal mid-gesture must not accumulate across directions.
+            await release()
+            feed(2, touches: 4, velocity: 2.07)
+            feed(2, touches: 4, velocity: -0.58)
+            check("reversal below threshold count", ups == 1 && downs == 2)
 
             SwipeRecognizer.fire = nil
             exit(0)

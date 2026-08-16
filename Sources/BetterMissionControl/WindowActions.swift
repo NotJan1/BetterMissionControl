@@ -61,10 +61,37 @@ enum WindowActions {
         ) == .success
     }
 
+    /// Presses the green button — zoom, or enter full screen on apps that map
+    /// it that way.
+    @discardableResult
+    static func zoom(_ window: ManagedWindow) -> Bool {
+        guard let element = axWindow(for: window) else { return false }
+        var button: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXZoomButtonAttribute as CFString,
+            &button
+        ) == .success, let button else { return false }
+        return AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString) == .success
+    }
+
     /// R6: quit the owning app outright, taking all its tiles with it.
+    ///
+    /// Asks politely: the app runs its normal quit, so it can prompt about
+    /// unsaved work.
     @discardableResult
     static func quitApp(_ window: ManagedWindow) -> Bool {
         NSRunningApplication(processIdentifier: window.pid)?.terminate() ?? false
+    }
+
+    /// Kills the app immediately, the way Force Quit does.
+    ///
+    /// Unlike `quitApp` this gives the app no chance to save or object, so
+    /// unsaved work is lost. It exists because that's occasionally exactly
+    /// what you want from a wedged app.
+    @discardableResult
+    static func forceQuitApp(_ window: ManagedWindow) -> Bool {
+        NSRunningApplication(processIdentifier: window.pid)?.forceTerminate() ?? false
     }
 
     // MARK: - CGWindowID -> AXUIElement matching

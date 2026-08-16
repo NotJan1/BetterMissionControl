@@ -139,7 +139,10 @@ struct OverlayView: View {
                 }
             },
             onActivate: { onActivate(window) },
-            onClose: { model.close(window) }
+            onClose: { model.close(window) },
+            onMinimize: { model.minimize(window) },
+            onZoom: { model.zoom(window) },
+            onForceQuit: { model.forceQuitApp(of: window) }
         )
     }
 

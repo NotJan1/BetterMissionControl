@@ -93,10 +93,35 @@ final class OverlayController {
     /// quit *this* app instead of the app under the selected tile.
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        keyMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown, .otherMouseDown]
+        ) { [weak self] event in
             guard let self else { return event }
+            if event.type == .otherMouseDown {
+                return self.handleMiddleClick(event) ? nil : event
+            }
             return self.handle(event) ? nil : event
         }
+    }
+
+    /// Middle-click a tile to close that window, the way AltTab does.
+    ///
+    /// Handled here rather than in SwiftUI, which has no middle-click gesture.
+    /// A three-finger click becomes a real middle click if something like
+    /// MiddleClick is running, so that works too without any special casing.
+    private func handleMiddleClick(_ event: NSEvent) -> Bool {
+        // Button 2 is the middle button; other extra buttons are left alone.
+        guard event.buttonNumber == 2, let panel, panel.isVisible else { return false }
+
+        // AppKit window coordinates run bottom-up; SwiftUI's layout is
+        // top-down, so the y axis has to be flipped to match tile positions.
+        let size = panel.frame.size
+        let location = event.locationInWindow
+        let point = CGPoint(x: location.x, y: size.height - location.y)
+
+        guard let window = model.window(at: point, in: size) else { return false }
+        model.close(window)
+        return true
     }
 
     private func removeKeyMonitor() {

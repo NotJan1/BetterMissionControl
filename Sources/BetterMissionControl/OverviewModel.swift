@@ -495,6 +495,43 @@ final class OverviewModel {
         removeWindows(ofPID: window.pid)
     }
 
+    /// The green button. The tile stays — the window is still open, just a
+    /// different size — and the next refresh picks up its new shape.
+    func zoom(_ window: ManagedWindow) {
+        guard WindowActions.zoom(window) else {
+            reportFailure(action: "zoom", window: window)
+            return
+        }
+    }
+
+    func forceQuitApp(of window: ManagedWindow) {
+        guard WindowActions.forceQuitApp(window) else {
+            reportFailure(action: "force quit", window: window)
+            return
+        }
+        flash("Force quit \(window.appName)")
+        removeWindows(ofPID: window.pid)
+    }
+
+    /// Topmost tile under a point, for hit-testing clicks the SwiftUI view
+    /// doesn't handle itself — a middle click, for instance.
+    func window(at point: CGPoint, in size: CGSize) -> ManagedWindow? {
+        let cell = cellSize(in: size)
+        return windows
+            .sorted { zIndex(for: $0) > zIndex(for: $1) }
+            .first { window in
+                let tile = window.tileSize(in: cell)
+                let center = center(for: window, in: size)
+                let frame = CGRect(
+                    x: center.x - tile.width / 2,
+                    y: center.y - tile.height / 2,
+                    width: tile.width,
+                    height: tile.height
+                )
+                return frame.contains(point)
+            }
+    }
+
     private func reportFailure(action: String, window: ManagedWindow) {
         if !PermissionsManager.isGranted(.accessibility) {
             flash("Can't \(action) — Accessibility permission not granted")
