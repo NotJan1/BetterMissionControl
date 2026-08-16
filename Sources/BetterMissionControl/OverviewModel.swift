@@ -101,14 +101,25 @@ final class OverviewModel {
 
     private func runRefreshLoop() async {
         while !Task.isCancelled {
-            await refresh()
+            // Never refresh mid-drag. A full cycle costs ~200ms with a handful
+            // of windows open, and landing that on the main actor while the
+            // user is dragging is exactly what made dragging stutter and lag
+            // behind the pointer.
+            if draggingID == nil {
+                await refresh()
+            }
             try? await Task.sleep(for: refreshInterval)
         }
     }
 
     // MARK: - Refresh
 
+    /// Counts completed refresh cycles. Used by the self-test to confirm the
+    /// loop really does stand down while a drag is in progress.
+    private(set) var refreshCount = 0
+
     private func refresh() async {
+        refreshCount += 1
         guard let snapshot = try? await WindowEnumerator.snapshot() else {
             if !hasLoadedOnce { state = .missingPermissions(PermissionsManager.missing) }
             return
@@ -213,11 +224,16 @@ final class OverviewModel {
         }
 
         guard !Task.isCancelled else { return }
-        for index in windows.indices {
-            if let image = images[windows[index].id] {
-                windows[index].thumbnail = image
+        // Applied as a single mutation: assigning into `windows` element by
+        // element publishes one observation change per window, so the whole
+        // canvas would be invalidated N times per refresh.
+        var updated = windows
+        for index in updated.indices {
+            if let image = images[updated[index].id] {
+                updated[index].thumbnail = image
             }
         }
+        windows = updated
     }
 
     /// Backing scale of the display the overlay is on, so captures match the
@@ -228,10 +244,13 @@ final class OverviewModel {
 
     private func captureDesktopPicture(from snapshot: WindowSnapshot) async {
         guard let display = snapshot.display else { return }
-        desktopPicture = await ThumbnailCapturer.captureDesktop(
+        guard let captured = await ThumbnailCapturer.captureDesktop(
             display: display,
             excluding: snapshot.foregroundWindows
-        )
+        ) else { return }
+        // Blurred once here rather than by a `.blur` modifier in the view,
+        // which would re-run a full-screen gaussian on every redraw.
+        desktopPicture = ThumbnailCapturer.blurred(captured, radius: 9) ?? captured
     }
 
     // MARK: - Geometry

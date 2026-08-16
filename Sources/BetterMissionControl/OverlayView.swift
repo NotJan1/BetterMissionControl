@@ -35,10 +35,10 @@ struct OverlayView: View {
     @ViewBuilder
     private var background: some View {
         if let desktop = model.desktopPicture {
+            // Already blurred when captured — no `.blur` here on purpose.
             Image(decorative: desktop, scale: 1, orientation: .up)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
-                .blur(radius: 9)
                 .overlay(Color.black.opacity(0.42))
                 .clipped()
         } else {
@@ -82,19 +82,30 @@ struct OverlayView: View {
                 // both stretched the tile and gave it a hit area that spilled
                 // over its neighbours.
                 let tileSize = window.tileSize(in: cell)
-                tile(for: window, in: size, cell: cell)
+                // `.equatable()` keeps a drag from re-rendering every tile:
+                // only the one whose position changed compares unequal, so the
+                // rest are skipped entirely. It needs the concrete tile view,
+                // so the gesture is attached out here rather than inside.
+                tile(for: window, cell: cell)
+                    .equatable()
                     .frame(width: tileSize.width, height: tileSize.height)
+                    .gesture(dragGesture(for: window, in: size))
                     .position(model.center(for: window, in: size))
                     .zIndex(model.zIndex(for: window))
             }
         }
         .frame(width: size.width, height: size.height)
         // Tiles are no longer animated into place by a stack layout, so the
-        // automatic arrangement settling in gets a gentle move of its own.
-        .animation(.easeOut(duration: 0.18), value: model.windows.count)
+        // automatic arrangement settling in gets a gentle move of its own —
+        // but never while dragging, where any implicit animation on position
+        // reads as the tile lagging behind the pointer.
+        .animation(
+            model.draggingID == nil ? .easeOut(duration: 0.18) : nil,
+            value: model.windows.count
+        )
     }
 
-    private func tile(for window: ManagedWindow, in size: CGSize, cell: CGSize) -> some View {
+    private func tile(for window: ManagedWindow, cell: CGSize) -> WindowTileView {
         let isDragging = model.draggingID == window.id
         return WindowTileView(
             window: window,
@@ -103,6 +114,9 @@ struct OverlayView: View {
             isDragging: isDragging,
             thumbnailSize: window.thumbnailSize(in: cell),
             onHover: { inside in
+                // Ignored mid-drag: the pointer sweeps across other tiles on
+                // the way, and each hover change invalidates the whole canvas.
+                guard model.draggingID == nil else { return }
                 if inside {
                     model.hoveredID = window.id
                 } else if model.hoveredID == window.id {
@@ -112,7 +126,6 @@ struct OverlayView: View {
             onActivate: { onActivate(window) },
             onClose: { model.close(window) }
         )
-        .gesture(dragGesture(for: window, in: size))
     }
 
     /// `minimumDistance` is what separates a click-to-activate from a drag —

@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import ScreenCaptureKit
 
 enum ThumbnailCapturer {
@@ -67,6 +68,25 @@ enum ThumbnailCapturer {
             pixels = CGSize(width: pixels.width * shrink, height: pixels.height * shrink)
         }
         return (max(1, Int(pixels.width.rounded())), max(1, Int(pixels.height.rounded())))
+    }
+
+    /// Blurs an image once, up front.
+    ///
+    /// The backdrop used to carry a SwiftUI `.blur` modifier, which re-runs a
+    /// full-screen gaussian every time the view redraws — including on every
+    /// frame of a drag. Baking it in makes the blur a one-off cost when the
+    /// overlay opens.
+    static func blurred(_ image: CGImage, radius: Double) -> CGImage? {
+        let source = CIImage(cgImage: image)
+        // Clamping first stops the edges fading to transparent as the blur
+        // samples beyond the image bounds.
+        guard let filter = CIFilter(name: "CIGaussianBlur", parameters: [
+            kCIInputImageKey: source.clampedToExtent(),
+            kCIInputRadiusKey: radius
+        ]), let output = filter.outputImage else { return nil }
+
+        return CIContext(options: [.useSoftwareRenderer: false])
+            .createCGImage(output, from: source.extent)
     }
 
     /// Captures the desktop picture alone, by filtering out every window at or

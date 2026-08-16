@@ -130,3 +130,16 @@ struct WindowTileView: View {
         .frame(height: OverlayLayout.labelHeight)
     }
 }
+
+/// Lets SwiftUI skip tiles that haven't changed. Without this every tile
+/// re-renders on every frame of a drag, because the whole window array is
+/// republished each time the dragged tile moves.
+extension WindowTileView: Equatable {
+    static func == (lhs: WindowTileView, rhs: WindowTileView) -> Bool {
+        lhs.window == rhs.window
+            && lhs.isSelected == rhs.isSelected
+            && lhs.isHovering == rhs.isHovering
+            && lhs.isDragging == rhs.isDragging
+            && lhs.thumbnailSize == rhs.thumbnailSize
+    }
+}

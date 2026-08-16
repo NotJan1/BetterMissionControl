@@ -346,6 +346,106 @@ enum SelfTest {
             exit(0)
         }
 
+        // What does the once-a-second refresh actually cost? Anything
+        // expensive here lands as a stutter mid-drag.
+        if mode == "perf" {
+            func time(_ label: String, _ work: () async -> Void) async {
+                let start = Date()
+                await work()
+                log(String(format: "%@: %.0f ms", label, Date().timeIntervalSince(start) * 1000))
+            }
+
+            await time("WindowEnumerator.snapshot") {
+                _ = try? await WindowEnumerator.snapshot()
+            }
+
+            guard let snap = try? await WindowEnumerator.snapshot() else { exit(1) }
+            let scale = WindowEnumerator.screenUnderCursor().backingScaleFactor
+            let cell = OverlayLayout.cellSize(count: snap.windows.count, in: WindowEnumerator.screenUnderCursor().frame.size)
+            log("windows=\(snap.windows.count) backingScale=\(scale)")
+
+            await time("capture ALL thumbnails (concurrent)") {
+                await withTaskGroup(of: Void.self) { group in
+                    for window in snap.windows {
+                        guard let source = snap.sourceWindows[window.id] else { continue }
+                        let target = window.thumbnailSize(in: cell)
+                        group.addTask {
+                            _ = await ThumbnailCapturer.capture(source, targetSize: target, backingScale: scale)
+                        }
+                    }
+                }
+            }
+
+            if let display = snap.display {
+                await time("capture desktop backdrop") {
+                    _ = await ThumbnailCapturer.captureDesktop(display: display, excluding: snap.foregroundWindows)
+                }
+            }
+
+            // A full cycle is what repeats every second while the overlay is up.
+            await time("FULL refresh cycle (enumerate + all thumbnails)") {
+                guard let s = try? await WindowEnumerator.snapshot() else { return }
+                await withTaskGroup(of: Void.self) { group in
+                    for window in s.windows {
+                        guard let source = s.sourceWindows[window.id] else { continue }
+                        let target = window.thumbnailSize(in: cell)
+                        group.addTask {
+                            _ = await ThumbnailCapturer.capture(source, targetSize: target, backingScale: scale)
+                        }
+                    }
+                }
+            }
+            exit(0)
+        }
+
+        // Does the tile track the pointer exactly, and does the refresh loop
+        // stay out of the way while dragging?
+        if mode == "dragtrack" {
+            let controller = OverlayController()
+            controller.show()
+            try? await Task.sleep(for: .seconds(2))
+            let model = controller.debugModel
+            let size = model.overlaySize
+            guard let target = model.windows.first, let origin = target.normalizedCenter else {
+                log("FAIL: no windows"); exit(1)
+            }
+
+            model.beginDrag(target)
+            var worstError: CGFloat = 0
+            // Walk the pointer in small steps, as a real drag would.
+            for step in stride(from: 20, through: 300, by: 20) {
+                let translation = CGSize(width: CGFloat(-step), height: CGFloat(step) / 2)
+                model.updateDrag(target, translation: translation, in: size)
+                guard let actual = model.windows.first(where: { $0.id == target.id })?.normalizedCenter else { continue }
+                let expected = CGPoint(
+                    x: origin.x + translation.width / size.width,
+                    y: origin.y + translation.height / size.height
+                )
+                // Clamping legitimately stops the tile at the edges.
+                let clamped = OverlayLayout.clampCenter(
+                    expected, tile: target.tileSize(in: model.cellSize(in: size)), in: size
+                )
+                let error = max(abs(actual.x - clamped.x), abs(actual.y - clamped.y)) * size.width
+                worstError = max(worstError, error)
+            }
+            log(String(format: "worst tracking error across drag: %.2f px", worstError))
+            log(worstError < 0.5 ? "RESULT: tracks pointer 1:1" : "RESULT: tile LAGS the pointer")
+
+            // Refresh must not fire mid-drag; a cycle costs ~200ms.
+            let before = model.refreshCount
+            log("refreshCount at drag start=\(before), holding drag for 2.5s…")
+            try? await Task.sleep(for: .seconds(2.5))
+            let during = model.refreshCount
+            log("refreshCount while dragging=\(during)")
+            log(during == before ? "RESULT: refresh suspended during drag" : "RESULT: refresh STILL RUNNING during drag (\(during - before) cycles)")
+
+            model.endDrag()
+            try? await Task.sleep(for: .seconds(1.6))
+            log("refreshCount after release=\(model.refreshCount)")
+            log(model.refreshCount > during ? "RESULT: refresh resumes after drag" : "RESULT: refresh did NOT resume")
+            exit(0)
+        }
+
         guard mode != "list" else { exit(0) }
 
         guard let targetApp else {
