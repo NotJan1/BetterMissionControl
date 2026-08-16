@@ -46,6 +46,15 @@ final class OverlayController {
         // Positions are stored normalised, so the model needs the pixel size
         // before it can resolve any of them.
         model.overlaySize = screen.frame.size
+        // Window frames arrive in a global, y-down space whose origin is the
+        // top-left of the *main* display. Converting the panel's own origin
+        // into that space is what lets the open animation start each tile
+        // exactly where its window really is.
+        let mainHeight = NSScreen.screens.first?.frame.maxY ?? screen.frame.maxY
+        model.overlayOrigin = CGPoint(
+            x: screen.frame.minX,
+            y: mainHeight - screen.frame.maxY
+        )
         model.start()
         installKeyMonitor()
 

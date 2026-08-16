@@ -446,6 +446,40 @@ enum SelfTest {
             exit(0)
         }
 
+        // Open animation: check the start geometry matches each window's real
+        // position, then capture the reveal in flight.
+        if mode == "animate" {
+            let directory = env["BMC_SELFTEST_OUT"] ?? NSTemporaryDirectory()
+            let controller = OverlayController()
+            controller.show()
+            let model = controller.debugModel
+
+            // Frames while the reveal plays out.
+            for (index, delay) in [40, 90, 160, 260, 700].enumerated() {
+                try? await Task.sleep(for: .milliseconds(delay))
+                await capture(to: "\(directory)/reveal-\(index)-\(delay)ms.png")
+            }
+
+            let size = model.overlaySize
+            let cell = model.cellSize(in: size)
+            log("overlayOrigin=\(describe(model.overlayOrigin)) revealed=\(model.isRevealed)")
+            for window in model.windows.prefix(4) {
+                let source = model.sourceCenter(for: window)
+                let expected = CGPoint(
+                    x: window.frame.midX - model.overlayOrigin.x,
+                    y: window.frame.midY - model.overlayOrigin.y
+                )
+                let matches = abs(source.x - expected.x) < 0.5 && abs(source.y - expected.y) < 0.5
+                let scale = model.sourceScale(for: window, tile: window.tileSize(in: cell))
+                log(String(
+                    format: "  '%@' window=(%.0f,%.0f) start=(%.0f,%.0f) %@ scale=%.2f",
+                    window.appName, window.frame.midX, window.frame.midY,
+                    source.x, source.y, matches ? "OK" : "MISMATCH", scale
+                ))
+            }
+            exit(0)
+        }
+
         guard mode != "list" else { exit(0) }
 
         guard let targetApp else {

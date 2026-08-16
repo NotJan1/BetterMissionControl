@@ -11,7 +11,10 @@ struct OverlayView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
+                // Fades up with the tiles, so the real desktop is still
+                // visible behind them as they start moving.
                 background
+                    .opacity(model.isRevealed ? 1 : 0)
                 // R9: a click that isn't on a tile dismisses with no action.
                 Color.clear
                     .contentShape(Rectangle())
@@ -82,6 +85,16 @@ struct OverlayView: View {
                 // both stretched the tile and gave it a hit area that spilled
                 // over its neighbours.
                 let tileSize = window.tileSize(in: cell)
+                let revealed = model.isRevealed
+                // Mission Control's signature move: each tile begins life at
+                // its window's real position and size, then flies into the
+                // overview. Scaling rather than resizing keeps the thumbnail's
+                // proportions exact throughout.
+                let scale = revealed ? 1 : model.sourceScale(for: window, tile: tileSize)
+                let place = revealed
+                    ? model.center(for: window, in: size)
+                    : model.sourceCenter(for: window)
+
                 // `.equatable()` keeps a drag from re-rendering every tile:
                 // only the one whose position changed compares unequal, so the
                 // rest are skipped entirely. It needs the concrete tile view,
@@ -89,8 +102,10 @@ struct OverlayView: View {
                 tile(for: window, cell: cell)
                     .equatable()
                     .frame(width: tileSize.width, height: tileSize.height)
+                    .scaleEffect(scale)
+                    .opacity(revealed ? 1 : 0)
                     .gesture(dragGesture(for: window, in: size))
-                    .position(model.center(for: window, in: size))
+                    .position(place)
                     .zIndex(model.zIndex(for: window))
             }
         }
@@ -130,8 +145,17 @@ struct OverlayView: View {
 
     /// `minimumDistance` is what separates a click-to-activate from a drag —
     /// below it the tile's own tap gesture wins.
+    ///
+    /// The coordinate space matters more than it looks. A `DragGesture`
+    /// defaults to `.local`, meaning the tile's *own* space — and this gesture
+    /// moves that very tile. So each frame the tile chased the pointer, its
+    /// coordinate space moved with it, the pointer appeared to have travelled
+    /// less than it had, and the next translation came back smaller. The tile
+    /// converged on the pointer instead of tracking it, which is exactly the
+    /// "it behaves like it has drag" feel. `.global` is stationary, so
+    /// translation is the true pointer delta.
     private func dragGesture(for window: ManagedWindow, in size: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 6)
+        DragGesture(minimumDistance: 6, coordinateSpace: .global)
             .onChanged { value in
                 model.beginDrag(window)
                 model.updateDrag(window, translation: value.translation, in: size)

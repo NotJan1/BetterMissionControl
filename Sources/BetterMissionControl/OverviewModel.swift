@@ -1,6 +1,7 @@
 import AppKit
 import Observation
 import ScreenCaptureKit
+import SwiftUI
 
 /// The single source of truth behind the overlay's SwiftUI view.
 @MainActor
@@ -30,6 +31,14 @@ final class OverviewModel {
     /// Set by the controller when the overlay opens. Positions are stored
     /// normalised, so nearly everything here needs the pixel size to resolve.
     var overlaySize: CGSize = .zero
+    /// Top-left of the overlay in the same global, y-down space window frames
+    /// use, so a window's real position can be expressed in overlay coordinates.
+    var overlayOrigin: CGPoint = .zero
+
+    /// False for the first frame after opening, so tiles can start life at
+    /// their windows' real positions and animate into the overview the way
+    /// Mission Control does.
+    private(set) var isRevealed = false
 
     /// How often the overlay re-reads the window list and re-captures
     /// thumbnails while open. Fast enough to feel live (R10), slow enough not
@@ -53,6 +62,7 @@ final class OverviewModel {
     func start() {
         state = .loading
         hasLoadedOnce = false
+        isRevealed = false
         windows = []
         desktopPicture = nil
         actionMessage = nil
@@ -130,14 +140,25 @@ final class OverviewModel {
         reconcile(with: snapshot.windows)
         resolvePositions()
 
-        if !hasLoadedOnce {
+        let isFirstLoad = !hasLoadedOnce
+        if isFirstLoad {
             hasLoadedOnce = true
+            // The backdrop is cheap (~35ms) and needs to be there before the
+            // reveal; thumbnails are not, and are left to land afterwards.
             await captureDesktopPicture(from: snapshot)
         }
 
-        await captureThumbnails()
         state = windows.isEmpty ? .empty : .ready
         ensureValidSelection()
+
+        // Tiles are shown as soon as their geometry is known rather than after
+        // every thumbnail is captured — waiting on ~220ms of captures before
+        // the overview even appears makes the hotkey feel unresponsive.
+        if isFirstLoad {
+            scheduleReveal()
+        }
+
+        await captureThumbnails()
     }
 
     /// Merges a fresh snapshot into the current list, keeping each tile's
@@ -264,6 +285,36 @@ final class OverviewModel {
     func center(for window: ManagedWindow, in size: CGSize) -> CGPoint {
         let normalized = window.normalizedCenter ?? CGPoint(x: 0.5, y: 0.5)
         return CGPoint(x: normalized.x * size.width, y: normalized.y * size.height)
+    }
+
+    /// Where the window actually is on screen, in overlay coordinates — the
+    /// starting point of the open animation.
+    func sourceCenter(for window: ManagedWindow) -> CGPoint {
+        CGPoint(
+            x: window.frame.midX - overlayOrigin.x,
+            y: window.frame.midY - overlayOrigin.y
+        )
+    }
+
+    /// How much bigger the real window is than its tile, so the tile can be
+    /// scaled up to match it before animating down into place.
+    func sourceScale(for window: ManagedWindow, tile: CGSize) -> CGFloat {
+        guard tile.width > 0 else { return 1 }
+        return max(window.frame.width / tile.width, 0.01)
+    }
+
+    private func scheduleReveal() {
+        guard !isRevealed else { return }
+        Task { @MainActor [weak self] in
+            // One frame at the source geometry gives SwiftUI something to
+            // animate *from*; without it the change collapses into the first
+            // layout pass and nothing moves.
+            try? await Task.sleep(for: .milliseconds(24))
+            guard let self, !self.isRevealed else { return }
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
+                self.isRevealed = true
+            }
+        }
     }
 
     // MARK: - Dragging (R4)
