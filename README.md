@@ -37,9 +37,9 @@ You can reopen the explanation any time from the menu bar icon →
 
 ## Using it
 
-Press **⌃⌥↑** (Control-Option-Up) anywhere to open the overview. It's
-deliberately one modifier away from Mission Control's own ⌃↑ so both don't fire
-at once.
+Press **⌃⌥↑** (Control-Option-Up) anywhere to open the overview — configurable
+in Settings (⌘,). The default is deliberately one modifier away from Mission
+Control's own ⌃↑ so both don't fire at once.
 
 | Action | What it does |
 |---|---|
@@ -63,24 +63,37 @@ a fraction of the screen so a layout still makes sense on a different display
 or after a resolution change. Menu bar icon → **Reset Saved Layout** returns to
 the automatic app-grouped arrangement.
 
-### Remapping the hotkey
+## Settings (⌘,)
 
-No Preferences window yet, so it's a `defaults` key. Values are Carbon key
-codes and modifier masks:
+Open with ⌘, — from inside the overview, from any of the app's windows, or via
+the menu bar icon.
 
-```bash
-defaults write com.janszalinski.BetterMissionControl HotKeyKeyCode -int 49
-```
+### Changing the hotkey
 
-`49` is Space. Modifiers are a bitmask — `4096` control, `2048` option, `512`
-shift, `256` command; add them together:
+Click the hotkey button and press the combination you want. Esc cancels. At
+least one modifier is required, since a bare key would swallow that keystroke
+system-wide. **Reset** puts ⌃⌥↑ back.
 
-```bash
-defaults write com.janszalinski.BetterMissionControl HotKeyModifiers -int 6144
-```
+If macOS already uses the combination you picked, Settings says which shortcut
+it clashes with rather than letting the two fight silently. That check reads
+the same preference file System Settings writes
+(`com.apple.symbolichotkeys`) — `RegisterEventHotKey` is no use for this, since
+it happily succeeds for a combination the system owns and then the system just
+wins.
 
-Restart the app for either to take effect. If the combination is already owned
-by another app, the menu bar item says so instead of failing silently.
+### Making this your Mission Control
+
+The Settings page walks through the two changes that free up Apple's own
+triggers, each with a button that deep-links straight to the right pane:
+
+1. **Free up F3** — Keyboard Shortcuts → Mission Control → untick it
+2. **Change the trackpad gesture** — Trackpad → More Gestures → Mission
+   Control → Off
+
+Neither can be done automatically. macOS has no public API for reassigning F3
+or capturing the trackpad gesture; the only route is Apple's private
+MultitouchSupport framework, which is the fragile, breaks-on-update territory
+this project avoids by design.
 
 ## How it's built
 
@@ -130,6 +143,15 @@ by another app, the menu bar item says so instead of failing silently.
   sitting behind the overlay, which reads quite differently from native Mission
   Control.
 
+- **The System Settings deep links were verified on macOS 27, not assumed.**
+  The anchors have shifted between releases, so both were checked by opening
+  them and looking at the result:
+  `com.apple.Keyboard-Settings.extension?Shortcuts` opens Keyboard with the
+  Keyboard Shortcuts sheet up, and
+  `com.apple.Trackpad-Settings.extension?MoreGestures` lands directly on the
+  More Gestures tab. If an anchor ever stops resolving, the app falls back to
+  opening System Settings and the on-screen steps say where to go.
+
 - **Ad-hoc code signature.** The signature changes whenever the code does, and
   macOS ties granted permissions to it — so after a rebuild you may have to
   re-tick the app in System Settings › Privacy & Security. A Developer ID
@@ -137,7 +159,24 @@ by another app, the menu bar item says so instead of failing silently.
 
 ## Not in v1
 
-Per the PRD: multiple Spaces, per-display overlays, a Preferences window, and
-Mac App Store distribution. Release signing (`codesign` with a Developer ID +
-`notarytool`) also isn't wired up — it needs an Apple Developer Program
-membership and full Xcode.
+Per the PRD: multiple Spaces, per-display overlays, and Mac App Store
+distribution. Capturing or reassigning F3 and the trackpad gesture is
+deliberately out too — Settings guides you through doing it by hand instead.
+
+Release signing (`codesign` with a Developer ID + `notarytool`) isn't wired up
+either — it needs an Apple Developer Program membership and full Xcode.
+
+## Testing
+
+There's no Xcode and therefore no test target, so `SelfTest` drives the real
+code paths headlessly behind an environment variable:
+
+```bash
+BMC_SELFTEST=match dist/BetterMissionControl.app/Contents/MacOS/BetterMissionControl
+```
+
+Modes: `list`, `match` (window matching, non-destructive), `close`, `minimize`,
+`key` (Cmd-W through the real key handler), `focus` (does the panel take
+keyboard focus), `drag` and `persist` (free-form positions), `thumbs` (capture
+resolution vs rendered size), `hotkey`, `settings`, `settingsui`. Set
+`BMC_SELFTEST_APP` to pick a target app where a mode needs one.

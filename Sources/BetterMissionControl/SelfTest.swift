@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 import CoreGraphics
 
 /// Headless exercise of the real enumeration and action code paths.
@@ -187,6 +188,95 @@ enum SelfTest {
             exit(0)
         }
 
+        // Hotkey configuration, conflict detection and the Settings deep links.
+        if mode == "hotkey" {
+            let manager = HotKeyManager {}
+            log("default combo=\(manager.displayString) registered=\(manager.register())")
+
+            // Display strings for a spread of key types.
+            for combo in [
+                HotKeyCombo(keyCode: UInt32(kVK_UpArrow), carbonModifiers: UInt32(controlKey | optionKey)),
+                HotKeyCombo(keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(cmdKey | shiftKey)),
+                HotKeyCombo(keyCode: UInt32(kVK_ANSI_M), carbonModifiers: UInt32(controlKey | cmdKey)),
+                HotKeyCombo(keyCode: UInt32(kVK_F3), carbonModifiers: 0)
+            ] {
+                log("  combo \(combo.displayString) hasModifier=\(combo.hasModifier)")
+            }
+
+            // Change it, confirm it sticks in UserDefaults.
+            let newCombo = HotKeyCombo(keyCode: UInt32(kVK_ANSI_J), carbonModifiers: UInt32(controlKey | optionKey))
+            let ok = manager.update(to: newCombo)
+            let storedKey = UserDefaults.standard.object(forKey: "HotKeyKeyCode") as? Int
+            let storedMods = UserDefaults.standard.object(forKey: "HotKeyModifiers") as? Int
+            log("update to \(newCombo.displayString) -> \(ok); persisted keyCode=\(storedKey ?? -1) mods=\(storedMods ?? -1)")
+            log("re-read: \(HotKeyManager {}.displayString)")
+
+            // Conflict detection against a shortcut macOS actually has enabled.
+            if let enabled = firstEnabledSystemHotKey() {
+                let detected = SystemHotKeys.conflict(for: enabled.combo)
+                log("system shortcut id=\(enabled.id) \(enabled.combo.displayString) -> conflict=\(detected?.description ?? "NONE (detection failed)")")
+            } else {
+                log("no enabled system hotkey with parameters found to test against")
+            }
+            // A combination nothing owns should come back clean.
+            let unlikely = HotKeyCombo(keyCode: UInt32(kVK_ANSI_J), carbonModifiers: UInt32(controlKey | optionKey | shiftKey))
+            log("control-option-shift-J -> conflict=\(SystemHotKeys.conflict(for: unlikely)?.description ?? "none (correct)")")
+
+            manager.resetToDefault()
+            log("after reset: \(manager.displayString)")
+
+            for destination in ["Keyboard-Settings.extension?Shortcuts", "Trackpad-Settings.extension?MoreGestures"] {
+                let url = URL(string: "x-apple.systempreferences:com.apple.\(destination)")!
+                let handler = NSWorkspace.shared.urlForApplication(toOpen: url)
+                log("deep link \(destination) -> \(handler?.lastPathComponent ?? "NO HANDLER")")
+            }
+            exit(0)
+        }
+
+        // R12: does Cmd-, reach the overlay's handler and ask for Settings?
+        if mode == "settings" {
+            let controller = OverlayController()
+            var opened = false
+            controller.onOpenSettings = { opened = true }
+            controller.show()
+            try? await Task.sleep(for: .seconds(2))
+
+            guard let event = NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: .command,
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0,
+                context: nil, characters: ",", charactersIgnoringModifiers: ",",
+                isARepeat: false, keyCode: 43
+            ) else { log("FAIL: could not build event"); exit(1) }
+
+            let handled = controller.debugHandleKey(event)
+            log("Cmd-, handled=\(handled) settingsRequested=\(opened)")
+            log("overlay dismissed=\(!controller.isVisible)")
+            exit(opened && handled ? 0 : 1)
+        }
+
+        // Does the Settings window actually build and lay out?
+        if mode == "settingsui" {
+            let manager = HotKeyManager {}
+            manager.register()
+            let controller = SettingsWindowController(hotKeyManager: manager, onHotKeyChanged: {})
+            controller.show()
+            try? await Task.sleep(for: .seconds(2))
+
+            let settingsWindows = NSApp.windows.filter { $0.title.contains("Settings") }
+            if settingsWindows.isEmpty {
+                log("FAIL: no Settings window")
+                exit(1)
+            }
+            for window in settingsWindows {
+                log("window '\(window.title)' visible=\(window.isVisible) size=\(Int(window.frame.width))x\(Int(window.frame.height))")
+                // A SwiftUI view that failed to lay out collapses to nothing,
+                // so a sane content size is the signal that it rendered.
+                let content = window.contentView?.fittingSize ?? .zero
+                log("content fitting size=\(Int(content.width))x\(Int(content.height)) subviews=\(window.contentView?.subviews.count ?? 0)")
+            }
+            exit(0)
+        }
+
         guard mode != "list" else { exit(0) }
 
         guard let targetApp else {
@@ -219,6 +309,35 @@ enum SelfTest {
             exit(1)
         }
         exit(0)
+    }
+
+    /// Picks a real, currently-enabled macOS shortcut to test conflict
+    /// detection against, rather than assuming one exists.
+    private static func firstEnabledSystemHotKey() -> (id: String, combo: HotKeyCombo)? {
+        guard let hotKeys = UserDefaults(suiteName: "com.apple.symbolichotkeys")?
+            .persistentDomain(forName: "com.apple.symbolichotkeys")?["AppleSymbolicHotKeys"]
+            as? [String: Any] else { return nil }
+
+        for (identifier, raw) in hotKeys.sorted(by: { $0.key < $1.key }) {
+            guard let entry = raw as? [String: Any],
+                  entry["enabled"] as? Bool == true,
+                  let value = entry["value"] as? [String: Any],
+                  let parameters = value["parameters"] as? [Any],
+                  parameters.count >= 3,
+                  let keyCode = (parameters[1] as? NSNumber)?.intValue, keyCode >= 0,
+                  let mask = (parameters[2] as? NSNumber)?.uintValue
+            else { continue }
+
+            var carbon: UInt32 = 0
+            if mask & NSEvent.ModifierFlags.command.rawValue != 0 { carbon |= UInt32(cmdKey) }
+            if mask & NSEvent.ModifierFlags.option.rawValue != 0 { carbon |= UInt32(optionKey) }
+            if mask & NSEvent.ModifierFlags.control.rawValue != 0 { carbon |= UInt32(controlKey) }
+            if mask & NSEvent.ModifierFlags.shift.rawValue != 0 { carbon |= UInt32(shiftKey) }
+            guard carbon != 0 else { continue }
+
+            return (identifier, HotKeyCombo(keyCode: UInt32(keyCode), carbonModifiers: carbon))
+        }
+        return nil
     }
 
     private static func describe(_ point: CGPoint?) -> String {

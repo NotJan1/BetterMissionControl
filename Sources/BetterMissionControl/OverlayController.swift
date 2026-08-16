@@ -9,6 +9,8 @@ final class OverlayController {
     private var panel: OverlayPanel?
     private var keyMonitor: Any?
     private var hotKeyDisplay: String = ""
+    /// Set by the app delegate so ⌘, works from inside the overlay too.
+    var onOpenSettings: (() -> Void)?
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
@@ -100,6 +102,13 @@ final class OverlayController {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
         if modifiers.contains(.command) {
+            // R12: ⌘, opens Settings. Handled before the tile shortcuts since
+            // it doesn't need a selection.
+            if event.charactersIgnoringModifiers == "," {
+                hide()
+                onOpenSettings?()
+                return true
+            }
             guard let window = model.selectedWindow else { return false }
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "w": model.close(window); return true       // R6

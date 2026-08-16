@@ -1,0 +1,342 @@
+import AppKit
+import Carbon.HIToolbox
+import Observation
+import SwiftUI
+
+/// R12: the Settings window, opened with ⌘,.
+@MainActor
+final class SettingsWindowController {
+    private var window: NSWindow?
+    private let model: SettingsModel
+
+    init(hotKeyManager: HotKeyManager, onHotKeyChanged: @escaping () -> Void) {
+        model = SettingsModel(hotKeyManager: hotKeyManager, onHotKeyChanged: onHotKeyChanged)
+    }
+
+    func show() {
+        if let window {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 620),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Better Mission Control Settings"
+        window.titlebarAppearsTransparent = true
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(
+            rootView: SettingsView(model: model, onDone: { [weak self] in self?.close() })
+        )
+        window.center()
+        self.window = window
+
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    func close() {
+        model.cancelRecording()
+        window?.orderOut(nil)
+        window = nil
+    }
+}
+
+@MainActor
+@Observable
+final class SettingsModel {
+    let hotKeyManager: HotKeyManager
+    private(set) var isRecording = false
+    private(set) var message: String?
+    private(set) var messageIsWarning = false
+
+    private var monitor: Any?
+    private let onHotKeyChanged: () -> Void
+
+    init(hotKeyManager: HotKeyManager, onHotKeyChanged: @escaping () -> Void) {
+        self.hotKeyManager = hotKeyManager
+        self.onHotKeyChanged = onHotKeyChanged
+        refreshConflictNotice()
+    }
+
+    var comboDisplay: String { hotKeyManager.displayString }
+
+    // MARK: - Recording
+
+    /// Captures the next key combination the user presses. A local monitor is
+    /// used so the keystroke never reaches the rest of the UI — otherwise
+    /// recording ⌘W would close the Settings window.
+    func startRecording() {
+        guard !isRecording else { return }
+        isRecording = true
+        message = nil
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+            guard let self else { return event }
+            self.handle(event)
+            return nil
+        }
+    }
+
+    func cancelRecording() {
+        stopMonitor()
+        guard isRecording else { return }
+        isRecording = false
+        refreshConflictNotice()
+    }
+
+    private func handle(_ event: NSEvent) {
+        // Modifiers alone aren't a shortcut; wait for a real key.
+        guard event.type == .keyDown else { return }
+
+        if Int(event.keyCode) == kVK_Escape {
+            cancelRecording()
+            return
+        }
+
+        let combo = HotKeyCombo(event: event)
+        guard combo.hasModifier else {
+            set(message: "Add at least one modifier — \u{2303}, \u{2325}, \u{21E7} or \u{2318}", warning: true)
+            return
+        }
+        apply(combo)
+    }
+
+    private func apply(_ combo: HotKeyCombo) {
+        stopMonitor()
+        isRecording = false
+
+        guard hotKeyManager.update(to: combo) else {
+            set(message: "\(combo.displayString) was refused — another app already holds it", warning: true)
+            return
+        }
+        onHotKeyChanged()
+
+        // Registration can succeed even when macOS owns the same combination,
+        // so warn separately rather than pretending it took cleanly.
+        if let conflict = hotKeyManager.systemConflict {
+            set(
+                message: "\(combo.displayString) is also \u{201C}\(conflict)\u{201D} in System Settings — one of them will win. Pick another, or turn that one off.",
+                warning: true
+            )
+        } else {
+            set(message: "Hotkey set to \(combo.displayString)", warning: false)
+        }
+    }
+
+    func resetHotKey() {
+        hotKeyManager.resetToDefault()
+        onHotKeyChanged()
+        refreshConflictNotice()
+    }
+
+    private func refreshConflictNotice() {
+        if let conflict = hotKeyManager.systemConflict {
+            set(
+                message: "\(hotKeyManager.displayString) is also \u{201C}\(conflict)\u{201D} in System Settings — one of them will win.",
+                warning: true
+            )
+        } else if hotKeyManager.registrationFailed {
+            set(message: "\(hotKeyManager.displayString) couldn't be registered — another app already holds it.", warning: true)
+        } else {
+            message = nil
+        }
+    }
+
+    private func set(message: String, warning: Bool) {
+        self.message = message
+        messageIsWarning = warning
+    }
+
+    private func stopMonitor() {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+    }
+
+    // MARK: - System Settings deep links
+
+    /// Both anchors verified on macOS 27: the first opens Keyboard with the
+    /// Keyboard Shortcuts sheet up, the second lands directly on Trackpad's
+    /// More Gestures tab.
+    enum Destination {
+        case keyboardShortcuts
+        case trackpadGestures
+
+        var url: URL {
+            switch self {
+            case .keyboardShortcuts:
+                return URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension?Shortcuts")!
+            case .trackpadGestures:
+                return URL(string: "x-apple.systempreferences:com.apple.Trackpad-Settings.extension?MoreGestures")!
+            }
+        }
+    }
+
+    func open(_ destination: Destination) {
+        // Falls back to System Settings generally if the anchor ever stops
+        // resolving — these have shifted between macOS releases before.
+        if !NSWorkspace.shared.open(destination.url) {
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
+        }
+    }
+}
+
+struct SettingsView: View {
+    let model: SettingsModel
+    let onDone: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    hotKeySection
+                    Divider()
+                    missionControlSection
+                }
+                .padding(24)
+            }
+            Divider()
+            HStack {
+                Button("Permissions & Help…") {
+                    NotificationCenter.default.post(name: .bmcShowWelcome, object: nil)
+                }
+                Spacer()
+                Button("Done", action: onDone).keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+        }
+        .frame(width: 560, height: 620)
+    }
+
+    // MARK: - Hotkey
+
+    private var hotKeySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Global hotkey")
+                .font(.system(size: 15, weight: .semibold))
+            Text("The keystroke that opens the overview from anywhere.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                Button(action: { model.startRecording() }) {
+                    Text(model.isRecording ? "Press a key combination\u{2026}" : model.comboDisplay)
+                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                        .frame(minWidth: 150)
+                        .padding(.vertical, 7)
+                }
+                .buttonStyle(.bordered)
+                .tint(model.isRecording ? .accentColor : nil)
+
+                if model.isRecording {
+                    Button("Cancel") { model.cancelRecording() }
+                } else {
+                    Button("Reset") { model.resetHotKey() }
+                }
+                Spacer()
+            }
+
+            if model.isRecording {
+                Text("Esc cancels. At least one modifier is required.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            if let message = model.message {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: model.messageIsWarning
+                          ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(model.messageIsWarning ? .orange : .green)
+                    Text(message)
+                        .font(.system(size: 12))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    (model.messageIsWarning ? Color.orange : Color.green).opacity(0.12),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                )
+            }
+        }
+    }
+
+    // MARK: - Mission Control guide
+
+    private var missionControlSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Make this your Mission Control")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("macOS keeps F3 and the four-finger swipe wired to its own Mission Control. Freeing them up takes two changes in System Settings — they can't be done from here (see below).")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            step(
+                number: 1,
+                title: "Free up F3",
+                detail: "In Keyboard Shortcuts, choose Mission Control in the list, then untick \u{201C}Mission Control\u{201D} — or double-click its shortcut and set it to something else. F3 is then free for this app.",
+                buttonTitle: "Open Keyboard Shortcuts",
+                action: { model.open(.keyboardShortcuts) }
+            )
+
+            step(
+                number: 2,
+                title: "Change the trackpad gesture",
+                detail: "Under More Gestures, set Mission Control to Off — or leave it if you're happy for both to coexist.",
+                buttonTitle: "Open Trackpad Gestures",
+                action: { model.open(.trackpadGestures) }
+            )
+
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.secondary)
+                Text("Why not automatic? macOS has no public API for reassigning F3 or capturing the trackpad gesture. The only way in is Apple's private MultitouchSupport framework — exactly the sort of thing that breaks on an OS update, which this app avoids on principle.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    private func step(
+        number: Int,
+        title: String,
+        detail: String,
+        buttonTitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text("\(number)")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(.tint))
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text(title).font(.system(size: 13, weight: .medium))
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(buttonTitle, action: action)
+                    .controlSize(.small)
+            }
+        }
+        .padding(13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+extension Notification.Name {
+    static let bmcShowWelcome = Notification.Name("BMCShowWelcome")
+}

@@ -6,6 +6,7 @@ import CoreGraphics
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var hotKeyManager: HotKeyManager?
+    private var settings: SettingsWindowController?
     private let overlay = OverlayController()
     private let welcome = WelcomeWindowController()
 
@@ -14,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Menu bar utility: no Dock icon, no main menu.
+        // Menu bar utility: no Dock icon.
         NSApp.setActivationPolicy(.accessory)
 
         if SelfTest.isRequested {
@@ -25,11 +26,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hotKeyManager = HotKeyManager { [weak self] in
             self?.overlay.toggle()
         }
-        let registered = hotKeyManager.register()
+        hotKeyManager.register()
         self.hotKeyManager = hotKeyManager
         overlay.updateHotKeyDisplay(hotKeyManager.displayString)
 
-        setUpStatusItem(hotKeyDisplay: hotKeyManager.displayString, hotKeyRegistered: registered)
+        settings = SettingsWindowController(hotKeyManager: hotKeyManager) { [weak self] in
+            self?.hotKeyDidChange()
+        }
+        overlay.onOpenSettings = { [weak self] in self?.showSettings() }
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(showWelcome),
+            name: .bmcShowWelcome,
+            object: nil
+        )
+
+        setUpMainMenu()
+        setUpStatusItem()
         showWelcomeIfNeeded(hotKeyDisplay: hotKeyManager.displayString)
     }
 
@@ -37,74 +51,99 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotKeyManager?.unregister()
     }
 
-    // MARK: - Menu bar
+    // MARK: - Menus
 
-    private func setUpStatusItem(hotKeyDisplay: String, hotKeyRegistered: Bool) {
+    /// An accessory app shows no menu bar, but the main menu is still what
+    /// makes ⌘, work whenever one of our windows is key (R12). Deliberately no
+    /// ⌘Q item: inside the overlay ⌘Q must quit the app under the selected
+    /// tile, and a menu key equivalent could shadow that.
+    private func setUpMainMenu() {
+        let mainMenu = NSMenu()
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu()
+
+        let settingsItem = NSMenuItem(
+            title: "Settings…",
+            action: #selector(showSettings),
+            keyEquivalent: ","
+        )
+        settingsItem.target = self
+        appMenu.addItem(settingsItem)
+
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+        NSApp.mainMenu = mainMenu
+    }
+
+    private func setUpStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = NSImage(
             systemSymbolName: "square.grid.2x2",
             accessibilityDescription: "Better Mission Control"
         )
-        item.button?.toolTip = "Better Mission Control (\(hotKeyDisplay))"
+        statusItem = item
+        rebuildStatusMenu()
+    }
+
+    private func rebuildStatusMenu() {
+        guard let statusItem, let hotKeyManager else { return }
+        let hotKey = hotKeyManager.displayString
+        statusItem.button?.toolTip = "Better Mission Control (\(hotKey))"
 
         let menu = NSMenu()
 
-        let show = NSMenuItem(
-            title: "Show Overview",
-            action: #selector(showOverview),
-            keyEquivalent: ""
-        )
+        let show = NSMenuItem(title: "Show Overview", action: #selector(showOverview), keyEquivalent: "")
         show.target = self
         menu.addItem(show)
 
-        if !hotKeyRegistered {
-            let warning = NSMenuItem(
-                title: "\(hotKeyDisplay) is unavailable — another app has it",
-                action: nil,
-                keyEquivalent: ""
-            )
-            warning.isEnabled = false
-            menu.addItem(warning)
+        let hint: NSMenuItem
+        if hotKeyManager.registrationFailed {
+            hint = NSMenuItem(title: "\(hotKey) is unavailable — another app has it", action: nil, keyEquivalent: "")
+        } else if let conflict = hotKeyManager.systemConflict {
+            hint = NSMenuItem(title: "\(hotKey) clashes with \(conflict)", action: nil, keyEquivalent: "")
         } else {
-            let hint = NSMenuItem(title: "Hotkey: \(hotKeyDisplay)", action: nil, keyEquivalent: "")
-            hint.isEnabled = false
-            menu.addItem(hint)
+            hint = NSMenuItem(title: "Hotkey: \(hotKey)", action: nil, keyEquivalent: "")
         }
+        hint.isEnabled = false
+        menu.addItem(hint)
 
         menu.addItem(.separator())
 
-        let permissions = NSMenuItem(
-            title: "Permissions & Help…",
-            action: #selector(showWelcome),
-            keyEquivalent: ""
-        )
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        let permissions = NSMenuItem(title: "Permissions & Help…", action: #selector(showWelcome), keyEquivalent: "")
         permissions.target = self
         menu.addItem(permissions)
 
-        let reset = NSMenuItem(
-            title: "Reset Saved Layout",
-            action: #selector(resetLayout),
-            keyEquivalent: ""
-        )
+        let reset = NSMenuItem(title: "Reset Saved Layout", action: #selector(resetLayout), keyEquivalent: "")
         reset.target = self
         menu.addItem(reset)
 
         menu.addItem(.separator())
 
-        // Deliberately no ⌘Q key equivalent: inside the overlay, ⌘Q must quit
-        // the app under the selected tile, not this one.
         let quit = NSMenuItem(title: "Quit Better Mission Control", action: #selector(quit), keyEquivalent: "")
         quit.target = self
         menu.addItem(quit)
 
-        item.menu = menu
-        statusItem = item
+        statusItem.menu = menu
+    }
+
+    private func hotKeyDidChange() {
+        guard let hotKeyManager else { return }
+        overlay.updateHotKeyDisplay(hotKeyManager.displayString)
+        rebuildStatusMenu()
     }
 
     // MARK: - Actions
 
     @objc private func showOverview() {
         overlay.show()
+    }
+
+    @objc private func showSettings() {
+        settings?.show()
     }
 
     @objc private func showWelcome() {
