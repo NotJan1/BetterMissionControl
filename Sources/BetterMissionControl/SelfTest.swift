@@ -259,7 +259,9 @@ enum SelfTest {
         if mode == "settingsui" {
             let manager = HotKeyManager {}
             manager.register()
-            let controller = SettingsWindowController(hotKeyManager: manager, onHotKeyChanged: {})
+            let controller = SettingsWindowController(
+                hotKeyManager: manager, onHotKeyChanged: {}, onGesture: {}
+            )
             controller.show()
             try? await Task.sleep(for: .seconds(2))
 
@@ -484,6 +486,56 @@ enum SelfTest {
         if mode == "input" {
             let seconds = Int(env["BMC_SELFTEST_SECONDS"] ?? "25") ?? 25
             await InputProbe.run(seconds: seconds)
+            exit(0)
+        }
+
+        // Swipe recognition, driven with synthetic contact frames using the
+        // velocities the guided probe actually measured on this hardware.
+        if mode == "gesture" {
+            var fired = 0
+            SwipeRecognizer.reset()
+            SwipeRecognizer.fire = { fired += 1 }
+
+            func feed(_ frames: Int, touches: Int, velocity: Float) {
+                for _ in 0 ..< frames {
+                    SwipeRecognizer.handle(touchCount: touches, meanVelocityY: velocity)
+                }
+            }
+
+            // A real swipe up measured about +2.07.
+            feed(8, touches: 4, velocity: 2.07)
+            log("four-finger swipe up -> fired \(fired) time(s) \(fired == 1 ? "OK" : "WRONG")")
+
+            // Still swiping: one gesture must not retrigger.
+            feed(20, touches: 4, velocity: 2.07)
+            log("held through a long swipe -> total \(fired) \(fired == 1 ? "OK (no retrigger)" : "WRONG")")
+
+            // Fingers lift, then a second deliberate swipe.
+            feed(3, touches: 0, velocity: 0)
+            try? await Task.sleep(for: .milliseconds(600))
+            feed(8, touches: 4, velocity: 2.07)
+            log("second swipe after lifting -> total \(fired) \(fired == 2 ? "OK" : "WRONG")")
+
+            // A swipe down measured about -0.58 and must never fire.
+            let before = fired
+            feed(3, touches: 0, velocity: 0)
+            try? await Task.sleep(for: .milliseconds(600))
+            feed(12, touches: 4, velocity: -0.58)
+            log("swipe down -> fired \(fired - before) time(s) \(fired == before ? "OK (ignored)" : "WRONG")")
+
+            // Three fingers is a different gesture and isn't ours.
+            feed(3, touches: 0, velocity: 0)
+            try? await Task.sleep(for: .milliseconds(600))
+            feed(12, touches: 3, velocity: 2.07)
+            log("three-finger swipe up -> fired \(fired - before) time(s) \(fired == before ? "OK (ignored)" : "WRONG")")
+
+            // Resting fingers drift slightly and must not count.
+            feed(3, touches: 0, velocity: 0)
+            try? await Task.sleep(for: .milliseconds(600))
+            feed(30, touches: 4, velocity: 0.15)
+            log("four fingers resting -> fired \(fired - before) time(s) \(fired == before ? "OK (ignored)" : "WRONG")")
+
+            SwipeRecognizer.fire = nil
             exit(0)
         }
 

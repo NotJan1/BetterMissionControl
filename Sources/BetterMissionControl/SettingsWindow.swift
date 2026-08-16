@@ -9,8 +9,15 @@ final class SettingsWindowController {
     private var window: NSWindow?
     private let model: SettingsModel
 
-    init(hotKeyManager: HotKeyManager, onHotKeyChanged: @escaping () -> Void) {
+    init(
+        hotKeyManager: HotKeyManager,
+        onHotKeyChanged: @escaping () -> Void,
+        onGesture: @escaping () -> Void
+    ) {
         model = SettingsModel(hotKeyManager: hotKeyManager, onHotKeyChanged: onHotKeyChanged)
+        model.onGesture = onGesture
+        // Restore the toggle's effect across launches.
+        model.applyTrackpadGesture()
     }
 
     func show() {
@@ -56,6 +63,48 @@ final class SettingsModel {
 
     private var monitor: Any?
     private let onHotKeyChanged: () -> Void
+
+    private enum DefaultsKey {
+        static let trackpadGesture = "TrackpadGestureEnabled"
+    }
+
+    /// Off by default: it's the one feature built on a private framework, so
+    /// it's something you opt into rather than inherit.
+    var trackpadGestureEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: DefaultsKey.trackpadGesture) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: DefaultsKey.trackpadGesture)
+            applyTrackpadGesture()
+        }
+    }
+
+    private(set) var trackpadStatus: String?
+    private(set) var trackpadStatusIsWarning = false
+
+    /// Starts or stops the recogniser to match the toggle, reporting failure
+    /// rather than leaving a switch that silently does nothing.
+    func applyTrackpadGesture() {
+        guard trackpadGestureEnabled else {
+            TrackpadGestureMonitor.shared.stop()
+            trackpadStatus = nil
+            return
+        }
+        let started = TrackpadGestureMonitor.shared.start { [weak self] in
+            self?.onGesture?()
+        }
+        if started {
+            trackpadStatus = "Listening for four-finger swipes."
+            trackpadStatusIsWarning = false
+        } else {
+            trackpadStatus = TrackpadGestureMonitor.shared.lastError
+                ?? "Couldn't read the trackpad on this version of macOS."
+            trackpadStatusIsWarning = true
+            UserDefaults.standard.set(false, forKey: DefaultsKey.trackpadGesture)
+        }
+    }
+
+    /// Set by the app delegate — what a recognised swipe should do.
+    var onGesture: (() -> Void)?
 
     init(hotKeyManager: HotKeyManager, onHotKeyChanged: @escaping () -> Void) {
         self.hotKeyManager = hotKeyManager
@@ -199,6 +248,8 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     hotKeySection
                     Divider()
+                    trackpadSection
+                    Divider()
                     missionControlSection
                 }
                 .padding(24)
@@ -266,6 +317,63 @@ struct SettingsView: View {
                     in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                 )
             }
+        }
+    }
+
+    // MARK: - Trackpad gesture
+
+    private var trackpadSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(isOn: Binding(
+                get: { model.trackpadGestureEnabled },
+                set: { model.trackpadGestureEnabled = $0 }
+            )) {
+                Text("Open with a four-finger swipe up")
+                    .font(.system(size: 15, weight: .semibold))
+            }
+            .toggleStyle(.switch)
+
+            Text("macOS never hands four-finger swipes to other apps, so this reads the trackpad directly through a private Apple interface — the same route BetterTouchTool and Swish take. It's off by default for that reason.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if model.trackpadGestureEnabled {
+                // Not advice — a consequence. Reading contacts is passive, so
+                // Apple still acts on the same swipe.
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Turn Apple's own gesture off, or both will open at once.")
+                            .font(.system(size: 12, weight: .medium))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("This can watch the swipe but can't take it — macOS acts on it either way. Set Mission Control to Off under More Gestures.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Open Trackpad Gestures") { model.open(.trackpadGestures) }
+                            .controlSize(.small)
+                    }
+                }
+                .padding(11)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+
+            if let status = model.trackpadStatus {
+                HStack(spacing: 6) {
+                    Image(systemName: model.trackpadStatusIsWarning
+                          ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(model.trackpadStatusIsWarning ? .orange : .green)
+                    Text(status).font(.system(size: 12))
+                }
+            }
+
+            Text("If a macOS update ever breaks this, the switch turns itself off and says so — nothing else in the app is affected.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

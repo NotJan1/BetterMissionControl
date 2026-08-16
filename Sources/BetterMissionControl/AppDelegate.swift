@@ -30,9 +30,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.hotKeyManager = hotKeyManager
         overlay.updateHotKeyDisplay(hotKeyManager.displayString)
 
-        settings = SettingsWindowController(hotKeyManager: hotKeyManager) { [weak self] in
-            self?.hotKeyDidChange()
-        }
+        // Constructing this also restores the trackpad gesture if it was left
+        // switched on, so the swipe works without opening Settings first.
+        settings = SettingsWindowController(
+            hotKeyManager: hotKeyManager,
+            onHotKeyChanged: { [weak self] in self?.hotKeyDidChange() },
+            onGesture: { [weak self] in self?.overlay.toggle() }
+        )
         overlay.onOpenSettings = { [weak self] in self?.showSettings() }
 
         NotificationCenter.default.addObserver(

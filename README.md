@@ -81,19 +81,27 @@ the same preference file System Settings writes
 it happily succeeds for a combination the system owns and then the system just
 wins.
 
+### Four-finger swipe up
+
+Settings has a switch for it. **Off by default**, because it's the one feature
+built on a private Apple interface.
+
+macOS never delivers four-finger swipes to other apps — verified, not assumed,
+with the `input` probe: no public `NSEvent` route sees them. The only way is to
+read trackpad contacts directly through `MultitouchSupport`, which is what
+BetterTouchTool and Swish do. That's confined to
+[MultitouchBridge.swift](Sources/BetterMissionControl/MultitouchBridge.swift) —
+see Notable decisions.
+
+**You must turn Apple's own gesture off** (Trackpad → More Gestures → Mission
+Control → Off), or both open at once. That isn't a preference: reading contacts
+is passive, so the swipe can be observed but never taken, and macOS acts on it
+regardless. Settings says so and links straight to the pane.
+
 ### Making this your Mission Control
 
-The Settings page walks through the two changes that free up Apple's own
-triggers, each with a button that deep-links straight to the right pane:
-
-1. **Free up F3** — Keyboard Shortcuts → Mission Control → untick it
-2. **Change the trackpad gesture** — Trackpad → More Gestures → Mission
-   Control → Off
-
-Neither can be done automatically. macOS has no public API for reassigning F3
-or capturing the trackpad gesture; the only route is Apple's private
-MultitouchSupport framework, which is the fragile, breaks-on-update territory
-this project avoids by design.
+The Settings page also walks through freeing up F3, with a deep-link to
+Keyboard Shortcuts → Mission Control.
 
 ## How it's built
 
@@ -152,6 +160,17 @@ this project avoids by design.
   More Gestures tab. If an anchor ever stops resolving, the app falls back to
   opening System Settings and the on-screen steps say where to go.
 
+- **One private framework, deliberately, sealed in one file.** The PRD rules
+  private APIs out, and that still holds everywhere except the four-finger
+  swipe, which has no public route at all. That exception was made knowingly,
+  and [MultitouchBridge.swift](Sources/BetterMissionControl/MultitouchBridge.swift)
+  is built to fail safe rather than to be trusted: symbols are resolved at
+  runtime with `dlopen`/`dlsym` so a renamed one can only make `start()` return
+  false — never a crash or a failed launch — no type it declares escapes the
+  file, and the feature is opt-in and off by default. If a macOS update breaks
+  it, the switch turns itself off and explains why. The fix is to leave it off,
+  not to chase Apple's internals.
+
 - **Ad-hoc code signature.** The signature changes whenever the code does, and
   macOS ties granted permissions to it — so after a rebuild you may have to
   re-tick the app in System Settings › Privacy & Security. A Developer ID
@@ -179,7 +198,7 @@ Modes: `list`, `match` (window matching, non-destructive), `close`, `minimize`,
 `key` (Cmd-W through the real key handler), `focus` (does the panel take
 keyboard focus), `drag` and `persist` (free-form positions), `thumbs` (capture
 resolution and tile aspect vs rendered size), `zorder`, `hotkey`, `settings`,
-`settingsui`. Set `BMC_SELFTEST_APP` to pick a target app where a mode needs
+`settingsui`, `gesture` (swipe recognition), `input` (guided: what macOS delivers for F3 and four-finger swipes). Set `BMC_SELFTEST_APP` to pick a target app where a mode needs
 one.
 
 `screenshot` mode is the useful one for checking appearance — it opens the
