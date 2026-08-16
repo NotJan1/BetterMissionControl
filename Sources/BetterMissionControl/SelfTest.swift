@@ -149,6 +149,44 @@ enum SelfTest {
             exit(0)
         }
 
+        // Are captures big enough for the size tiles are actually drawn at?
+        if mode == "thumbs" {
+            let controller = OverlayController()
+            controller.show()
+            try? await Task.sleep(for: .seconds(3))
+            let model = controller.debugModel
+            let size = model.overlaySize
+            let scale = WindowEnumerator.screenUnderCursor().backingScaleFactor
+            let cell = model.tileSize(in: size)
+            log("overlay=\(Int(size.width))x\(Int(size.height)) backingScale=\(scale) windows=\(model.windows.count)")
+            log("tile cell=\(Int(cell.width))x\(Int(cell.height)) points")
+
+            for window in model.windows {
+                guard let image = window.thumbnail else {
+                    log("  '\(window.appName)' NO THUMBNAIL"); continue
+                }
+                // Fit the window's aspect into the cell's image area.
+                let imageArea = OverlayLayout.imageArea(of: cell)
+                let aspect = window.aspectRatio
+                var drawn = CGSize(width: imageArea.width, height: imageArea.width / aspect)
+                if drawn.height > imageArea.height {
+                    drawn = CGSize(width: imageArea.height * aspect, height: imageArea.height)
+                }
+                // Matches the tile view's cap at the window's native size.
+                if drawn.width > window.frame.width {
+                    drawn = CGSize(width: window.frame.width, height: window.frame.height)
+                }
+                let neededPx = drawn.width * scale
+                let ratio = CGFloat(image.width) / neededPx
+                let verdict = ratio >= 0.99 ? "sharp" : String(format: "SOFT (%.0f%% of needed)", ratio * 100)
+                log(String(
+                    format: "  '%@' captured=%dx%d px, drawn=%.0fx%.0f pt -> needs %.0f px : %@",
+                    window.appName, image.width, image.height, drawn.width, drawn.height, neededPx, verdict
+                ))
+            }
+            exit(0)
+        }
+
         guard mode != "list" else { exit(0) }
 
         guard let targetApp else {

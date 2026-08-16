@@ -117,6 +117,14 @@ by another app, the menu bar item says so instead of failing silently.
   per window. Far cheaper, and the overlay is typically only open for seconds.
   The interval is `refreshInterval` in `OverviewModel`.
 
+- **Captures are sized from the tile's rendered size × the display's backing
+  scale factor.** A fixed cap was what made thumbnails look soft: with only a
+  few windows open, tiles are drawn large enough that a capped capture had to
+  be upscaled. Sizing from the size a tile is actually drawn at keeps it sharp
+  at any tile size and captures *less* when tiles are small. A window is never
+  drawn beyond its own native size — there'd be no extra detail to show, so
+  stretching it would only look blurry.
+
 - **The dimmed backdrop is the real desktop**, captured by filtering out every
   window at or above the normal layer. A plain blur would show the windows
   sitting behind the overlay, which reads quite differently from native Mission

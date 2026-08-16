@@ -16,7 +16,7 @@ struct WindowTileView: View {
     private var showsCloseButton: Bool { isHovering || isSelected }
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: OverlayLayout.labelSpacing) {
             thumbnail
             label
         }
@@ -48,6 +48,11 @@ struct WindowTileView: View {
             }
         }
         .aspectRatio(window.aspectRatio, contentMode: .fit)
+        // Never draw a window larger than it actually is. A small window
+        // stretched to fill a large tile has no more detail to show, so it
+        // just looks blurry — better to leave it at native size, which is
+        // also what native Mission Control does.
+        .frame(maxWidth: window.frame.width, maxHeight: window.frame.height)
         .overlay(selectionRing)
         .overlay(alignment: .topLeading) { closeButton }
         // Lifting the tile while it's dragged makes it read as picked up,

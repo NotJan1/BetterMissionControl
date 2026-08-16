@@ -9,7 +9,17 @@ enum OverlayLayout {
     static let spacing: CGFloat = 26
     static let outerPadding: CGFloat = 72
     static let labelHeight: CGFloat = 24
+    /// Gap between a tile's thumbnail and its label.
+    static let labelSpacing: CGFloat = 6
     static let cornerRadius: CGFloat = 10
+
+    /// The part of a cell the thumbnail itself occupies.
+    ///
+    /// Capture sizing and rendering both go through this, so a thumbnail is
+    /// always captured for the size it will actually be drawn at.
+    static func imageArea(of cell: CGSize) -> CGSize {
+        CGSize(width: cell.width, height: max(40, cell.height - labelHeight - labelSpacing))
+    }
 
     /// Aims for a block of tiles roughly as wide-to-tall as the screen, which
     /// is what keeps the automatic arrangement feeling like Mission Control.

@@ -176,13 +176,21 @@ final class OverviewModel {
         guard !targets.isEmpty else { return }
 
         let scale = tileScale
+        // Capture for the size tiles are actually drawn at, so thumbnails stay
+        // sharp when few windows make tiles large, and cost less when many
+        // windows make them small.
+        let imageArea = OverlayLayout.imageArea(of: tileSize(in: overlaySize))
         let images = await withTaskGroup(
             of: (CGWindowID, CGImage?).self,
             returning: [CGWindowID: CGImage].self
         ) { group in
             for target in targets {
                 group.addTask {
-                    (target.id, await ThumbnailCapturer.capture(target.source, backingScale: scale))
+                    (target.id, await ThumbnailCapturer.capture(
+                        target.source,
+                        targetSize: imageArea,
+                        backingScale: scale
+                    ))
                 }
             }
             var collected: [CGWindowID: CGImage] = [:]
