@@ -70,9 +70,12 @@ the menu bar icon.
 
 ### Changing the hotkey
 
-Click the hotkey button and press the combination you want. Esc cancels. At
-least one modifier is required, since a bare key would swallow that keystroke
-system-wide. **Reset** puts ⌃⌥↑ back.
+Click the hotkey button and press the combination you want. Esc cancels.
+**Reset** puts ⌃⌥↑ back.
+
+Ordinary keys need at least one modifier, since a bare letter would swallow
+that keystroke system-wide. Function keys don't — F3 on its own is a valid
+hotkey, which is the point if you're taking it back from Mission Control.
 
 If macOS already uses the combination you picked, Settings says which shortcut
 it clashes with rather than letting the two fight silently. That check reads
