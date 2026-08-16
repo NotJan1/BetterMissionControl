@@ -21,7 +21,7 @@ It's a separate, self-contained overlay window — not a modification of the rea
 - Multiple desktop Spaces / moving windows between Spaces from the overlay (matches native single-display Mission Control behavior for v1; multi-Space support is a fast-follow)
 - Mac App Store distribution — sandboxing would block the Accessibility/window-management APIs this depends on
 - Intel Mac support — macOS 27 itself doesn't run on Intel
-- A full Preferences window — v1 ships with sensible hardcoded defaults plus a minimal menu-bar item; configurable hotkeys etc. are a fast-follow
+- Automatically capturing or reassigning F3 or the trackpad gesture — no public API supports this (would require Apple's private MultitouchSupport framework, the same fragile territory ruled out for Mission Control itself); the Settings page provides guided manual instructions instead
 
 ## Platform & environment
 
@@ -48,9 +48,9 @@ R1. WHEN the user presses the global hotkey THE SYSTEM SHALL display a floating 
 
 R2. WHEN the overlay is open THE SYSTEM SHALL show a live thumbnail for every currently visible (non-minimized) window, grouped visually by owning app. Minimized windows are excluded — matching native Mission Control.
 
-R3. WHEN the overlay opens with no saved custom order THE SYSTEM SHALL arrange tiles using an automatic app-grouped layout approximating native Mission Control's own arrangement.
+R3. WHEN the overlay opens with no saved custom layout THE SYSTEM SHALL arrange tiles using an automatic app-grouped layout approximating native Mission Control's own arrangement.
 
-R4. WHEN the user drags a tile to a new position THE SYSTEM SHALL update the layout immediately and persist the new order for the next time the overlay opens, taking precedence over the automatic arrangement from then on.
+R4. WHEN the user drags a tile THE SYSTEM SHALL let it be placed freely anywhere within the overlay — not constrained to a grid — and persist its exact position for the next time the overlay opens, taking precedence over the automatic arrangement from then on.
 
 R5. WHEN the user navigates with arrow keys or Tab THE SYSTEM SHALL move a visible selection highlight between tiles.
 
@@ -66,15 +66,18 @@ R10. WHEN a window closes or an app quits while the overlay is open — whether 
 
 R11. WHEN the app requests Accessibility, Screen Recording, or Input Monitoring for the first time THE SYSTEM SHALL show a plain-English explanation of why, before or alongside the system prompt.
 
+R12. WHEN the user presses ⌘, THE SYSTEM SHALL open a Settings window offering a configurable global hotkey (replacing the hardcoded default) and instructions for freeing up F3 and the trackpad gesture in System Settings, with a deep-link button to the relevant pane where feasible.
+
 ## Edge cases
 
 - Hotkey pressed with no windows open → overlay shows a brief "No open windows" state rather than a blank grid or nothing happening — the hotkey should always give feedback
 - Accessibility or Screen Recording not yet granted → overlay explains what's missing and links to System Settings, rather than silently failing to populate
 - The selected tile's window closes or its app quits by some other means while the overlay is open → selection moves to the next available tile rather than pointing at nothing
+- User sets a custom hotkey already claimed by the system or another app → Settings page surfaces a conflict warning rather than silently failing to register
 
 ## Visual design
 
-Reference: Apple's native Mission Control — dimmed/blurred desktop background, windows as scaled-down live thumbnails, app-grouped clustering, similar density and spacing. Close visual approximation is the v1 bar, not pixel-perfect matching — [assumed: following macOS's own window-shadow and corner-radius conventions gets it close enough; a dedicated polish pass can tighten spacing and animation later if it isn't].
+Reference: Apple's native Mission Control — dimmed/blurred desktop background, windows as scaled-down live thumbnails, app-grouped clustering, similar density and spacing. Close visual approximation is the v1 bar, not pixel-perfect matching — [assumed: following macOS's own window-shadow and corner-radius conventions gets it close enough; a dedicated polish pass can tighten spacing and animation later if it isn't]. Thumbnails should render at native/Retina sharpness — match ScreenCaptureKit's capture scale to the display's backing scale factor rather than under-sampling.
 
 ## Required macOS permissions
 
@@ -95,14 +98,16 @@ Reference: Apple's native Mission Control — dimmed/blurred desktop background,
 | Quit an app entirely | `NSRunningApplication.terminate()` |
 | Global hotkey | `RegisterEventHotKey` (Carbon — lower permission cost) or `CGEventTap` |
 | Remembered layout | A small local store (`UserDefaults` or a JSON file) keyed by a stable window identity — see Key Decisions |
+| Configurable hotkey storage | `UserDefaults`; re-register via `RegisterEventHotKey`/`CGEventTap` whenever the Settings page changes it |
 
 ## Key decisions & assumptions
 
-- **Window identity for persisted layout** — [assumed: key by bundle identifier + window title, since Accessibility API window references aren't stable across app relaunches. Two windows of the same app sharing a title would be treated as interchangeable for ordering — tighten this later if it causes visible glitches]
-- **Global hotkey default** — [assumed: Control+Option+Up Arrow, distinct from Mission Control's own Control+Up Arrow so the two don't both fire — should be trivially remappable even before a full Preferences window exists, e.g. via a `defaults` key]
+- **Window identity for persisted layout** — [assumed: key by bundle identifier + window title, since Accessibility API window references aren't stable across app relaunches. Two windows of the same app sharing a title would be treated as interchangeable for position assignment — tighten this later if it causes visible glitches]
+- **Global hotkey default** — [assumed: Control+Option+Up Arrow as the starting default, distinct from Mission Control's own Control+Up Arrow so the two don't both fire — now user-configurable via the Settings page (R12)]
 - **Multi-display** — [assumed: v1 shows the overlay on the display containing the cursor, single-display only; matching native Mission Control's per-display behavior is out of scope for v1]
 - **Stale layout entries** — [assumed: a saved tile position referring to a window/app no longer open is silently dropped; new, never-seen windows are appended using the automatic arrangement]
 - **Deployment target** — macOS 26 Tahoe and later (see Platform & environment)
+- **System Settings deep-link** — [assumed: the Settings page attempts `x-apple.systempreferences:` deep-linking to the Keyboard Shortcuts and Trackpad panes; verify the exact anchor empirically since it has shifted across macOS versions — fall back to opening System Settings generally if it doesn't resolve]
 
 ## Developer context
 
@@ -114,10 +119,11 @@ New to native macOS/Swift — background is web (HTML/CSS/JS) and Firebase. Swif
 2. Populate the overlay with live tiles (ScreenCaptureKit + window enumeration), no interactivity yet
 3. Wire up click-to-activate and the per-tile close control
 4. Keyboard navigation plus the four selected-tile shortcuts
-5. Drag-to-rearrange, in-memory only
-6. Persist and restore the custom layout
+5. Free-form drag-to-reposition, in-memory only
+6. Persist and restore each tile's custom position
 7. Permission-request UX pass — plain-English explanations before each system prompt
 8. Visual polish toward the Mission Control reference
+9. Settings page (⌘,) — configurable hotkey, F3/gesture guidance with deep-link
 
 ## Working conventions
 
