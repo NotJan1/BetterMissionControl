@@ -1,4 +1,6 @@
 import AppKit
+import ApplicationServices
+import CoreGraphics
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -14,6 +16,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Menu bar utility: no Dock icon, no main menu.
         NSApp.setActivationPolicy(.accessory)
+
+        if SelfTest.isRequested {
+            Task { await SelfTest.run() }
+            return
+        }
 
         let hotKeyManager = HotKeyManager { [weak self] in
             self?.overlay.toggle()

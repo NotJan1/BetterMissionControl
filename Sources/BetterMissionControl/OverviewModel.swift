@@ -21,6 +21,10 @@ final class OverviewModel {
     /// because SwiftUI's `@State` is a macro whose compiler plugin ships only
     /// with full Xcode, and only one tile can be hovered at a time anyway.
     var hoveredID: CGWindowID?
+    /// Transient banner shown when an action couldn't be carried out, so a
+    /// failure says so instead of looking like the overlay ignored the key.
+    private(set) var actionMessage: String?
+    private var messageTask: Task<Void, Never>?
 
     /// How often the overlay re-reads the window list and re-captures
     /// thumbnails while open. Fast enough to feel live (R10), slow enough not
@@ -236,19 +240,52 @@ final class OverviewModel {
         WindowActions.activate(window)
     }
 
+    /// Tiles are only dropped when the action actually succeeded.
+    ///
+    /// Removing optimistically looked fine while everything worked, but on
+    /// failure the window was still open, so the next poll re-added it — and
+    /// since unknown windows are appended, the tile appeared to jump to the
+    /// end of the grid instead of reporting that nothing had happened.
     func close(_ window: ManagedWindow) {
-        WindowActions.close(window)
+        guard WindowActions.close(window) else {
+            reportFailure(action: "close", window: window)
+            return
+        }
         remove(id: window.id)
     }
 
     func minimize(_ window: ManagedWindow) {
-        WindowActions.minimize(window)
+        guard WindowActions.minimize(window) else {
+            reportFailure(action: "minimize", window: window)
+            return
+        }
         remove(id: window.id)
     }
 
     func quitApp(of window: ManagedWindow) {
-        WindowActions.quitApp(window)
+        guard WindowActions.quitApp(window) else {
+            reportFailure(action: "quit", window: window)
+            return
+        }
         removeWindows(ofPID: window.pid)
+    }
+
+    private func reportFailure(action: String, window: ManagedWindow) {
+        if !PermissionsManager.isGranted(.accessibility) {
+            flash("Can't \(action) — Accessibility permission not granted")
+        } else {
+            flash("\(window.appName) wouldn't let that window be \(action)d")
+        }
+    }
+
+    private func flash(_ message: String) {
+        actionMessage = message
+        messageTask?.cancel()
+        messageTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            self?.actionMessage = nil
+        }
     }
 
     /// Optimistic removal — the poll would catch up within a second anyway,

@@ -44,8 +44,16 @@ final class OverlayController {
         model.start()
         installKeyMonitor()
 
-        NSApp.activate()
+        // `NSApp.activate()` alone is a *cooperative* request, and macOS is
+        // free to ignore it for a background/accessory app — which it does
+        // here, leaving the panel visible but never key. A panel that isn't
+        // key gets no keystrokes, so the local monitor never fires and every
+        // shortcut silently goes to whatever app was in front. The deprecated
+        // `ignoringOtherApps:` form is the only one that reliably takes focus
+        // for a hotkey-summoned overlay.
+        NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        panel.makeFirstResponder(panel.contentView)
     }
 
     /// - Parameter returningFocus: pass `false` when a window has just been
@@ -136,4 +144,10 @@ final class OverlayController {
     func resetLayout() {
         model.resetLayout()
     }
+
+    // MARK: - Test seams
+
+    /// Dispatches a key event through exactly the path the local monitor uses.
+    func debugHandleKey(_ event: NSEvent) -> Bool { handle(event) }
+    var debugModel: OverviewModel { model }
 }

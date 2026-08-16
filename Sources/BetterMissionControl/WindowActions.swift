@@ -81,32 +81,62 @@ enum WindowActions {
         ) == .success, let candidates = value as? [AXUIElement], !candidates.isEmpty
         else { return nil }
 
-        // Unambiguous: the app owns exactly one window, so it must be this one.
-        if candidates.count == 1 { return candidates[0] }
-
         var best: (element: AXUIElement, score: Int)?
         for candidate in candidates {
-            var score = 0
-            if let frame = frame(of: candidate) {
-                if abs(frame.origin.x - window.frame.origin.x) <= frameTolerance,
-                   abs(frame.origin.y - window.frame.origin.y) <= frameTolerance {
-                    score += 4
-                }
-                if abs(frame.width - window.frame.width) <= frameTolerance,
-                   abs(frame.height - window.frame.height) <= frameTolerance {
-                    score += 3
-                }
-            }
-            if !window.title.isEmpty, title(of: candidate) == window.title {
-                score += 3
-            }
-            if score > (best?.score ?? 0) {
-                best = (candidate, score)
+            let candidateScore = score(candidate, against: window)
+            if candidateScore > (best?.score ?? 0) {
+                best = (candidate, candidateScore)
             }
         }
 
         guard let best, best.score >= minimumScore else { return nil }
         return best.element
+    }
+
+    /// Confidence that `candidate` is the same window as `window`.
+    ///
+    /// Every candidate is scored, including when the app owns only one AX
+    /// window — returning that one unchecked would happily close an unrelated
+    /// window whenever the lists disagree (Finder's desktop window, for
+    /// instance, is an AX window that no tile corresponds to).
+    private static func score(_ candidate: AXUIElement, against window: ManagedWindow) -> Int {
+        var score = 0
+        if let frame = frame(of: candidate) {
+            if abs(frame.origin.x - window.frame.origin.x) <= frameTolerance,
+               abs(frame.origin.y - window.frame.origin.y) <= frameTolerance {
+                score += 4
+            }
+            if abs(frame.width - window.frame.width) <= frameTolerance,
+               abs(frame.height - window.frame.height) <= frameTolerance {
+                score += 3
+            }
+        }
+        if !window.title.isEmpty, title(of: candidate) == window.title {
+            score += 3
+        }
+        return score
+    }
+
+    /// Explains what `axWindow(for:)` decided, for the self-test harness.
+    static func debugMatchDescription(for window: ManagedWindow) -> String {
+        guard AXIsProcessTrusted() else { return "accessibility not trusted" }
+        let appElement = AXUIElementCreateApplication(window.pid)
+        var value: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &value)
+        guard status == .success, let candidates = value as? [AXUIElement] else {
+            return "kAXWindows failed (status \(status.rawValue))"
+        }
+        let scored = candidates.map { candidate -> String in
+            let title = title(of: candidate) ?? ""
+            let frame = frame(of: candidate).map { "(\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height)))" } ?? "no-frame"
+            var hasCloseButton = false
+            var button: CFTypeRef?
+            if AXUIElementCopyAttributeValue(candidate, kAXCloseButtonAttribute as CFString, &button) == .success {
+                hasCloseButton = button != nil
+            }
+            return "[score=\(score(candidate, against: window)) '\(title)' \(frame) closeButton=\(hasCloseButton)]"
+        }
+        return "\(candidates.count) candidate(s): \(scored.joined(separator: " "))"
     }
 
     // MARK: - Attribute readers

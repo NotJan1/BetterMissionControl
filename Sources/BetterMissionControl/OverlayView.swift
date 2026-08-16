@@ -18,7 +18,13 @@ struct OverlayView: View {
                     .contentShape(Rectangle())
                     .onTapGesture(perform: onDismiss)
                 content(in: geometry.size)
+
+                if let message = model.actionMessage {
+                    banner(message)
+                        .transition(.opacity)
+                }
             }
+            .animation(.easeOut(duration: 0.15), value: model.actionMessage)
         }
         .ignoresSafeArea()
     }
@@ -143,6 +149,24 @@ struct OverlayView: View {
         }
         .frame(width: 180)
         .opacity(0.85)
+    }
+
+    private func banner(_ text: String) -> some View {
+        VStack {
+            Spacer()
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.yellow)
+                Text(text)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 11)
+            .background(.black.opacity(0.72), in: Capsule())
+            .padding(.bottom, 46)
+        }
+        .allowsHitTesting(false)
     }
 
     private func message(symbol: String, title: String, detail: String) -> some View {
