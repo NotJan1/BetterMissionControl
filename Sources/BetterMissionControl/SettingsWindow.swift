@@ -98,8 +98,11 @@ final class SettingsModel {
         }
 
         let combo = HotKeyCombo(event: event)
-        guard combo.hasModifier else {
-            set(message: "Add at least one modifier — \u{2303}, \u{2325}, \u{21E7} or \u{2318}", warning: true)
+        guard combo.isUsable else {
+            set(
+                message: "Add a modifier — \u{2303}, \u{2325}, \u{21E7} or \u{2318}. Function keys like F3 can be used on their own.",
+                warning: true
+            )
             return
         }
         apply(combo)

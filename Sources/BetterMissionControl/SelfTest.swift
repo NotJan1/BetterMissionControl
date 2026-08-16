@@ -480,6 +480,13 @@ enum SelfTest {
             exit(0)
         }
 
+        // What does macOS actually deliver for F3 and a four-finger swipe?
+        if mode == "input" {
+            let seconds = Int(env["BMC_SELFTEST_SECONDS"] ?? "25") ?? 25
+            await InputProbe.run(seconds: seconds)
+            exit(0)
+        }
+
         guard mode != "list" else { exit(0) }
 
         guard let targetApp else {

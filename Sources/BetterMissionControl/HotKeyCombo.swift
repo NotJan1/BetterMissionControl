@@ -14,9 +14,25 @@ struct HotKeyCombo: Equatable {
         carbonModifiers: UInt32(controlKey | optionKey)
     )
 
-    /// A global hotkey with no modifiers would swallow an ordinary keypress
-    /// system-wide, so at least one is required.
     var hasModifier: Bool { carbonModifiers != 0 }
+
+    /// Keys that are usable as a hotkey on their own.
+    ///
+    /// A bare letter would be swallowed system-wide, so modifiers are normally
+    /// required — but a function key types nothing, and binding F3 by itself is
+    /// the whole point of taking it back from Mission Control.
+    var isStandaloneCapable: Bool {
+        Self.functionKeys.contains(Int(keyCode))
+    }
+
+    /// A combination the recorder will accept.
+    var isUsable: Bool { hasModifier || isStandaloneCapable }
+
+    private static let functionKeys: Set<Int> = [
+        kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7,
+        kVK_F8, kVK_F9, kVK_F10, kVK_F11, kVK_F12, kVK_F13, kVK_F14,
+        kVK_F15, kVK_F16, kVK_F17, kVK_F18, kVK_F19, kVK_F20
+    ]
 
     var displayString: String {
         var parts = ""
