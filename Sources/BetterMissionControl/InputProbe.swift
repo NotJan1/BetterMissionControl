@@ -5,48 +5,118 @@ import CoreGraphics
 /// Finds out what macOS actually delivers to a background app for the two
 /// inputs Mission Control owns: the F3 key and the four-finger swipe.
 ///
-/// Both are claimed by the WindowServer by default, and the interesting
-/// question is what — if anything — reaches us once the user has turned the
-/// system's own use of them off. That's an empirical question about this
-/// machine and this OS version, not something to guess at, so this listens on
-/// every public route at once and reports which ones see the input:
-///
-///   * a `CGEventTap` on key events and on NX system-defined events, which is
-///     where the F-key row's media-key behaviour shows up
-///   * global `NSEvent` monitors for gesture, swipe and scroll events, with
-///     the touch count that comes attached
+/// Runs as a guided sequence with one instruction at a time, because a free-
+/// for-all can't tell an F3 press from a stray brightness key, or a swipe up
+/// from the fingers coming back down afterwards. Each phase reports only what
+/// it measured — no phase draws a conclusion the data doesn't support.
 ///
 ///     BMC_SELFTEST=input dist/BetterMissionControl.app/Contents/MacOS/BetterMissionControl
 @MainActor
 enum InputProbe {
     private static var monitors: [Any] = []
-    private static var tap: CFMachPort?
 
-    static func run(seconds: Int) async {
+    static func run(seconds _: Int) async {
         note("Accessibility granted: \(AXIsProcessTrusted())")
-        note("Press F3, then do a four-finger swipe up. Listening for \(seconds)s…")
-        note("--- events below ---")
-
         startEventTap()
         startGestureMonitors()
         startMultitouch()
+        note("")
 
-        for remaining in stride(from: seconds, to: 0, by: -5) {
-            try? await Task.sleep(for: .seconds(5))
-            note("… \(remaining - 5)s left")
-        }
+        await phase(
+            "STEP 1 of 3 — press F3 (and nothing else) a few times",
+            seconds: 12
+        )
+        reportKeys()
 
-        note("--- done ---")
-        note(Summary.report())
+        await phase(
+            "STEP 2 of 3 — four-finger swipe UP, several times",
+            seconds: 12
+        )
+        let up = reportSwipe(named: "UP")
+
+        await phase(
+            "STEP 3 of 3 — four-finger swipe DOWN, several times",
+            seconds: 12
+        )
+        let down = reportSwipe(named: "DOWN")
+
+        note("")
+        note(verdict(up: up, down: down))
+        MultitouchBridge.stop()
     }
 
-    // MARK: - CGEventTap (keyboard + media keys)
+    // MARK: - Phases
+
+    private static func phase(_ instruction: String, seconds: Int) async {
+        Bucket.reset()
+        note("")
+        note(">>> \(instruction) — \(seconds)s")
+        for remaining in stride(from: seconds, to: 0, by: -4) {
+            try? await Task.sleep(for: .seconds(4))
+            note("    \(remaining - 4)s")
+        }
+    }
+
+    private static func reportKeys() {
+        if Bucket.plainKeys.contains(kVK_F3) {
+            note("    RESULT: F3 arrived as a plain key — RegisterEventHotKey can bind it directly")
+        }
+        if Bucket.systemKeys.isEmpty && !Bucket.plainKeys.contains(kVK_F3) {
+            note("    RESULT: nothing reached the tap — the WindowServer consumes F3 upstream")
+        }
+        for code in Bucket.systemKeys.sorted() {
+            note("    RESULT: system-defined key code=\(code) (\(nxKeyName(code)))")
+        }
+        if !Bucket.plainKeys.isEmpty {
+            let names = Bucket.plainKeys.sorted().map { "\($0)" }.joined(separator: ", ")
+            note("    (plain key codes also seen: \(names))")
+        }
+    }
+
+    /// Returns the mean vertical velocity for this phase, or nil if no
+    /// four-finger movement was seen.
+    private static func reportSwipe(named name: String) -> Float? {
+        guard !Bucket.velocities.isEmpty else {
+            note("    RESULT: no four-finger movement detected")
+            return nil
+        }
+        let mean = Bucket.velocities.reduce(0, +) / Float(Bucket.velocities.count)
+        let positive = Bucket.velocities.filter { $0 > 0 }.count
+        note(String(
+            format: "    RESULT: %@ — %d samples, mean vY=%+.3f (%d positive, %d negative), max fingers=%d",
+            name, Bucket.velocities.count, mean, positive,
+            Bucket.velocities.count - positive, Bucket.maxTouches
+        ))
+        return mean
+    }
+
+    /// Only states a direction when the two phases actually disagree in sign.
+    private static func verdict(up: Float?, down: Float?) -> String {
+        var lines = ["VERDICT:"]
+        lines.append("  four-finger contacts visible: \(Bucket.everSawFour ? "YES (private framework)" : "no")")
+        lines.append("  public route to the gesture: \(Bucket.sawPublicMultiFinger ? "YES" : "no — nothing public delivers it")")
+
+        switch (up, down) {
+        case let (up?, down?) where up > 0 && down < 0:
+            lines.append("  swipe up is POSITIVE vY (confirmed: up \(fmt(up)) vs down \(fmt(down)))")
+        case let (up?, down?) where up < 0 && down > 0:
+            lines.append("  swipe up is NEGATIVE vY (confirmed: up \(fmt(up)) vs down \(fmt(down)))")
+        case let (up?, down?):
+            lines.append("  INCONCLUSIVE — both phases had the same sign (up \(fmt(up)), down \(fmt(down)))")
+        default:
+            lines.append("  INCONCLUSIVE — one or both swipe phases saw nothing")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func fmt(_ value: Float) -> String { String(format: "%+.3f", value) }
+
+    // MARK: - Routes
 
     private static func startEventTap() {
         // Type 14 is NX_SYSDEFINED, where the F-key row's special-key
         // behaviour arrives when it isn't acting as a plain function key.
-        let mask: CGEventMask =
-            (1 << CGEventType.keyDown.rawValue) | (1 << 14)
+        let mask: CGEventMask = (1 << CGEventType.keyDown.rawValue) | (1 << 14)
 
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -59,116 +129,83 @@ enum InputProbe {
             },
             userInfo: nil
         ) else {
-            note("CGEventTap: FAILED to create — Input Monitoring is probably not granted")
-            Summary.tapCreated = false
+            note("CGEventTap: FAILED — Input Monitoring probably not granted")
             return
         }
-
-        self.tap = tap
-        Summary.tapCreated = true
         note("CGEventTap: created")
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
     }
 
-    // MARK: - Gesture monitors
-
     private static func startGestureMonitors() {
-        let masks: [(String, NSEvent.EventTypeMask)] = [
-            ("gesture", .gesture),
-            ("beginGesture", .beginGesture),
-            ("endGesture", .endGesture),
-            ("swipe", .swipe),
-            ("magnify", .magnify),
-            ("scrollWheel", .scrollWheel)
+        let masks: [NSEvent.EventTypeMask] = [
+            .gesture, .beginGesture, .endGesture, .swipe, .magnify, .scrollWheel
         ]
-
-        for (name, mask) in masks {
+        for mask in masks {
             let monitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { event in
-                let touches = event.allTouches()
-                let active = touches.filter {
+                let active = event.allTouches().filter {
                     $0.phase == .began || $0.phase == .moved || $0.phase == .stationary
                 }
-                // Only a multi-finger event is interesting here; ordinary
-                // two-finger scrolling would drown everything else out.
-                guard !active.isEmpty || name != "scrollWheel" else { return }
-                if active.count >= 3 {
-                    Summary.sawMultiFinger = true
-                    Summary.maxTouches = max(Summary.maxTouches, active.count)
-                }
-                if !active.isEmpty {
-                    note("\(name): touches=\(active.count) (total \(touches.count)) deltaY=\(String(format: "%.1f", event.scrollingDeltaY))")
-                }
+                if active.count >= 4 { Bucket.sawPublicMultiFinger = true }
             }
             if let monitor { monitors.append(monitor) }
         }
         note("global monitors: \(monitors.count)/\(masks.count) installed")
     }
 
-    // MARK: - Private framework route
-
-    /// Confirms the private binding works *and* which way "up" runs in
-    /// normalised trackpad coordinates, rather than assuming it.
     private static func startMultitouch() {
         let started = MultitouchBridge.start { _, raw, count, _, _ in
             let contacts = MultitouchBridge.touches(from: raw, count: count)
             guard !contacts.isEmpty else { return 0 }
-            Summary.maxRawTouches = max(Summary.maxRawTouches, Int(count))
-            if count >= 4 {
-                let meanVelocityY = contacts.reduce(Float(0)) { $0 + $1.normalized.velocity.y } / Float(count)
-                if abs(meanVelocityY) > 0.2 {
-                    Summary.sawRawFourFinger = true
-                    Summary.rawVelocitySamples.append(meanVelocityY)
-                    InputProbe.note("multitouch: \(count) fingers, mean vY=\(String(format: "%+.2f", meanVelocityY))")
-                }
+            Bucket.maxTouches = max(Bucket.maxTouches, contacts.count)
+            guard contacts.count >= 4 else { return 0 }
+            Bucket.everSawFour = true
+            let meanVelocityY = contacts.reduce(Float(0)) { $0 + $1.normalized.velocity.y }
+                / Float(contacts.count)
+            // Ignore fingers merely resting; only real movement carries a sign.
+            if abs(meanVelocityY) > 0.25 {
+                Bucket.velocities.append(meanVelocityY)
             }
             return 0
         }
-        if started {
-            note("MultitouchSupport: started, \(MultitouchBridge.deviceCount) device(s)")
-        } else {
-            note("MultitouchSupport: unavailable — \(MultitouchBridge.lastError ?? "unknown") (devices reported: \(MultitouchBridge.deviceCount))")
-        }
-        Summary.multitouchStarted = started
+        note(started
+             ? "MultitouchSupport: started, \(MultitouchBridge.deviceCount) device(s)"
+             : "MultitouchSupport: unavailable — \(MultitouchBridge.lastError ?? "unknown")")
     }
 
-    // MARK: - Reporting
+    // MARK: - Collection
 
-    enum Summary {
-        nonisolated(unsafe) static var tapCreated = false
-        nonisolated(unsafe) static var sawPlainF3 = false
-        nonisolated(unsafe) static var sawSystemDefined = false
-        nonisolated(unsafe) static var systemDefinedKeys: Set<Int> = []
-        nonisolated(unsafe) static var sawMultiFinger = false
+    enum Bucket {
+        nonisolated(unsafe) static var plainKeys: Set<Int> = []
+        nonisolated(unsafe) static var systemKeys: Set<Int> = []
+        nonisolated(unsafe) static var velocities: [Float] = []
         nonisolated(unsafe) static var maxTouches = 0
-        nonisolated(unsafe) static var multitouchStarted = false
-        nonisolated(unsafe) static var sawRawFourFinger = false
-        nonisolated(unsafe) static var maxRawTouches = 0
-        nonisolated(unsafe) static var rawVelocitySamples: [Float] = []
+        nonisolated(unsafe) static var everSawFour = false
+        nonisolated(unsafe) static var sawPublicMultiFinger = false
 
-        static func report() -> String {
-            var lines = ["SUMMARY:"]
-            lines.append("  event tap created: \(tapCreated)")
-            lines.append("  F3 as a plain key (kVK_F3): \(sawPlainF3 ? "YES — RegisterEventHotKey can bind it" : "no")")
-            lines.append("  F3 as a system-defined media key: \(sawSystemDefined ? "YES — a CGEventTap can catch and consume it" : "no")")
-            if !systemDefinedKeys.isEmpty {
-                lines.append("  system-defined key codes seen: \(systemDefinedKeys.sorted())")
-            }
-            lines.append("  PUBLIC route to four-finger swipe: \(sawMultiFinger ? "YES (max \(maxTouches) touches)" : "no — macOS delivers nothing public")")
-            lines.append("  PRIVATE route (MultitouchSupport) started: \(multitouchStarted)")
-            lines.append("  PRIVATE route saw four fingers: \(sawRawFourFinger ? "YES (max \(maxRawTouches) contacts)" : "no (max \(maxRawTouches) contacts)")")
-            if !rawVelocitySamples.isEmpty {
-                let up = rawVelocitySamples.filter { $0 > 0 }.count
-                let down = rawVelocitySamples.filter { $0 < 0 }.count
-                lines.append("  swipe direction samples: \(up) positive, \(down) negative — positive vY means 'up'")
-            }
-            return lines.joined(separator: "\n")
+        /// Cleared between phases so each instruction is measured on its own.
+        static func reset() {
+            plainKeys.removeAll()
+            systemKeys.removeAll()
+            velocities.removeAll()
+            maxTouches = 0
         }
     }
 
-    /// Nonisolated so the event-tap callback, which runs outside the main
-    /// actor, can report what it sees.
+    /// Documented NX special-key codes, so a brightness key can't be mistaken
+    /// for the one we're after.
+    private static func nxKeyName(_ code: Int) -> String {
+        let names: [Int: String] = [
+            0: "Volume Up", 1: "Volume Down", 2: "Brightness Up", 3: "Brightness Down",
+            4: "Num Lock", 6: "Help", 7: "Mute",
+            8: "Keyboard Illumination Up", 9: "Keyboard Illumination Down",
+            10: "Keyboard Illumination Toggle", 16: "Play/Pause", 17: "Next",
+            18: "Previous", 19: "Fast Forward", 20: "Rewind"
+        ]
+        return names[code] ?? "unknown — possibly Mission Control"
+    }
+
     nonisolated fileprivate static func note(_ message: String) {
         FileHandle.standardError.write(Data("PROBE: \(message)\n".utf8))
     }
@@ -177,22 +214,14 @@ enum InputProbe {
 /// Top-level so it can be used as a C function pointer.
 private func probeCallback(type: CGEventType, event: CGEvent) {
     if type == .keyDown {
-        let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
-        if keyCode == kVK_F3 {
-            InputProbe.Summary.sawPlainF3 = true
-            InputProbe.note("tap: plain key F3 (keyCode \(keyCode)) — bindable directly")
-        } else {
-            InputProbe.note("tap: key keyCode=\(keyCode)")
-        }
+        InputProbe.Bucket.plainKeys.insert(Int(event.getIntegerValueField(.keyboardEventKeycode)))
         return
     }
-
-    // NX_SYSDEFINED, subtype 8 is where special keys arrive.
-    guard type.rawValue == 14, let nsEvent = NSEvent(cgEvent: event), nsEvent.subtype.rawValue == 8 else { return }
+    guard type.rawValue == 14,
+          let nsEvent = NSEvent(cgEvent: event),
+          nsEvent.subtype.rawValue == 8 else { return }
     let keyCode = Int((nsEvent.data1 & 0xFFFF_0000) >> 16)
     let isDown = ((nsEvent.data1 & 0x0000_FF00) >> 8) == 0x0A
     guard isDown else { return }
-    InputProbe.Summary.sawSystemDefined = true
-    InputProbe.Summary.systemDefinedKeys.insert(keyCode)
-    InputProbe.note("tap: system-defined special key code=\(keyCode)")
+    InputProbe.Bucket.systemKeys.insert(keyCode)
 }
