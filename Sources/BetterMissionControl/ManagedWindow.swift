@@ -44,6 +44,16 @@ struct ManagedWindow: Identifiable {
     var appIcon: NSImage? {
         NSRunningApplication(processIdentifier: pid)?.icon
     }
+
+    /// Size a tile's thumbnail is drawn at inside the given cell.
+    func thumbnailSize(in cell: CGSize) -> CGSize {
+        OverlayLayout.thumbnailSize(aspect: aspectRatio, native: frame.size, in: cell)
+    }
+
+    /// Thumbnail plus label — the tile's actual bounds.
+    func tileSize(in cell: CGSize) -> CGSize {
+        OverlayLayout.tileSize(aspect: aspectRatio, native: frame.size, in: cell)
+    }
 }
 
 extension ManagedWindow: Equatable {

@@ -73,14 +73,19 @@ struct OverlayView: View {
     /// R4: a free canvas rather than a grid — every tile sits at its own
     /// position and can be dragged anywhere inside the overlay.
     private func canvas(in size: CGSize) -> some View {
-        let cell = model.tileSize(in: size)
+        let cell = model.cellSize(in: size)
 
         return ZStack(alignment: .topLeading) {
             ForEach(model.windows) { window in
-                tile(for: window, in: size)
-                    .frame(width: cell.width, height: cell.height)
+                // Framed to the tile's own size, not the cell: a cell can be
+                // far taller than the window's proportions, and framing to it
+                // both stretched the tile and gave it a hit area that spilled
+                // over its neighbours.
+                let tileSize = window.tileSize(in: cell)
+                tile(for: window, in: size, cell: cell)
+                    .frame(width: tileSize.width, height: tileSize.height)
                     .position(model.center(for: window, in: size))
-                    .zIndex(model.draggingID == window.id ? 1 : 0)
+                    .zIndex(model.zIndex(for: window))
             }
         }
         .frame(width: size.width, height: size.height)
@@ -89,13 +94,14 @@ struct OverlayView: View {
         .animation(.easeOut(duration: 0.18), value: model.windows.count)
     }
 
-    private func tile(for window: ManagedWindow, in size: CGSize) -> some View {
+    private func tile(for window: ManagedWindow, in size: CGSize, cell: CGSize) -> some View {
         let isDragging = model.draggingID == window.id
         return WindowTileView(
             window: window,
             isSelected: model.selectedID == window.id,
             isHovering: model.hoveredID == window.id,
             isDragging: isDragging,
+            thumbnailSize: window.thumbnailSize(in: cell),
             onHover: { inside in
                 if inside {
                     model.hoveredID = window.id

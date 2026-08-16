@@ -33,7 +33,11 @@ final class OverlayPanel: NSPanel {
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
         animationBehavior = .none
-        // Keep the overlay out of screen recordings and screenshots of itself.
-        sharingType = .none
+        // Deliberately left as the default (`.readWrite`): `.none` would keep
+        // the overlay out of *all* screen capture, which silently makes it
+        // impossible to screenshot or screen-record the overview. Excluding the
+        // overlay from its own thumbnails is already handled elsewhere — window
+        // enumeration skips our own process, and the desktop backdrop capture
+        // filters out everything at or above the normal window layer.
     }
 }

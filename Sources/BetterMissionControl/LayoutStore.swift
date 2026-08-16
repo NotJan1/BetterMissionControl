@@ -9,6 +9,9 @@ struct LayoutEntry: Codable {
     /// Normalised rather than absolute so a layout saved on one display still
     /// makes sense on another, and survives a resolution change.
     let center: CGPoint
+    /// Where this tile sat in the stack. Optional so layouts written before
+    /// stacking existed still decode.
+    var stackOrder: Double?
 }
 
 /// Remembers where the user put each tile (R4).
@@ -36,23 +39,25 @@ final class LayoutStore {
 
     var isEmpty: Bool { entries.isEmpty }
 
-    /// Saved centre for a window, if one was stored.
+    /// Saved placement for a window, if one was stored.
     ///
     /// `consumed` lets the caller resolve several windows that share a layout
     /// key — two untitled windows of one app, say — by handing each a
     /// different saved slot instead of stacking them all in one place.
-    func center(for key: LayoutKey, consumed: inout Set<Int>) -> CGPoint? {
+    func entry(for key: LayoutKey, consumed: inout Set<Int>) -> LayoutEntry? {
         for (index, entry) in entries.enumerated()
         where entry.key == key && !consumed.contains(index) {
             consumed.insert(index)
-            return entry.center
+            return entry
         }
         return nil
     }
 
-    func save(_ windows: [ManagedWindow]) {
+    func save(_ windows: [ManagedWindow], stackOrder: [CGWindowID: Double]) {
         entries = windows.compactMap { window in
-            window.normalizedCenter.map { LayoutEntry(key: window.layoutKey, center: $0) }
+            window.normalizedCenter.map {
+                LayoutEntry(key: window.layoutKey, center: $0, stackOrder: stackOrder[window.id])
+            }
         }
         guard let data = try? JSONEncoder().encode(entries) else { return }
         try? data.write(to: fileURL, options: .atomic)

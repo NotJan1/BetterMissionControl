@@ -42,6 +42,11 @@ final class OverviewModel {
     private let layoutStore = LayoutStore()
     private var hasLoadedOnce = false
     private var dragStart: (id: CGWindowID, center: CGPoint)?
+    /// Stacking order for overlapping tiles. Now that tiles can be placed
+    /// freely they can overlap, so the one touched most recently belongs on
+    /// top — array order would otherwise decide it arbitrarily.
+    private var stackOrder: [CGWindowID: Double] = [:]
+    private var stackCounter: Double = 0
 
     // MARK: - Lifecycle
 
@@ -161,8 +166,13 @@ final class OverviewModel {
         var consumed: Set<Int> = []
 
         for index in windows.indices where windows[index].normalizedCenter == nil {
-            if let saved = layoutStore.center(for: windows[index].layoutKey, consumed: &consumed) {
-                windows[index].normalizedCenter = saved
+            let id = windows[index].id
+            if let saved = layoutStore.entry(for: windows[index].layoutKey, consumed: &consumed) {
+                windows[index].normalizedCenter = saved.center
+                if let order = saved.stackOrder {
+                    stackOrder[id] = order
+                    stackCounter = max(stackCounter, order)
+                }
             } else if automatic.indices.contains(index) {
                 windows[index].normalizedCenter = automatic[index]
             }
@@ -170,16 +180,18 @@ final class OverviewModel {
     }
 
     private func captureThumbnails() async {
+        // Capture each window for the size its own tile is drawn at, so
+        // thumbnails stay sharp when few windows make tiles large, and cost
+        // less when many windows make them small.
+        let cell = cellSize(in: overlaySize)
         let targets = windows.compactMap { window in
-            sourceWindows[window.id].map { (id: window.id, source: $0) }
+            sourceWindows[window.id].map {
+                (id: window.id, source: $0, drawnSize: window.thumbnailSize(in: cell))
+            }
         }
         guard !targets.isEmpty else { return }
 
         let scale = tileScale
-        // Capture for the size tiles are actually drawn at, so thumbnails stay
-        // sharp when few windows make tiles large, and cost less when many
-        // windows make them small.
-        let imageArea = OverlayLayout.imageArea(of: tileSize(in: overlaySize))
         let images = await withTaskGroup(
             of: (CGWindowID, CGImage?).self,
             returning: [CGWindowID: CGImage].self
@@ -188,7 +200,7 @@ final class OverviewModel {
                 group.addTask {
                     (target.id, await ThumbnailCapturer.capture(
                         target.source,
-                        targetSize: imageArea,
+                        targetSize: target.drawnSize,
                         backingScale: scale
                     ))
                 }
@@ -224,7 +236,9 @@ final class OverviewModel {
 
     // MARK: - Geometry
 
-    func tileSize(in size: CGSize) -> CGSize {
+    /// The notional grid cell each tile is fitted into. Tiles are sized to
+    /// their own proportions within it, not to the cell itself.
+    func cellSize(in size: CGSize) -> CGSize {
         OverlayLayout.cellSize(count: max(windows.count, 1), in: size)
     }
 
@@ -240,6 +254,17 @@ final class OverviewModel {
         dragStart = (window.id, window.normalizedCenter ?? CGPoint(x: 0.5, y: 0.5))
         draggingID = window.id
         selectedID = window.id
+        raise(window.id)
+    }
+
+    /// Brings a tile to the front of the stack and keeps it there.
+    func raise(_ id: CGWindowID) {
+        stackCounter += 1
+        stackOrder[id] = stackCounter
+    }
+
+    func zIndex(for window: ManagedWindow) -> Double {
+        stackOrder[window.id] ?? 0
     }
 
     func updateDrag(_ window: ManagedWindow, translation: CGSize, in size: CGSize) {
@@ -253,7 +278,7 @@ final class OverviewModel {
         )
         windows[index].normalizedCenter = OverlayLayout.clampCenter(
             proposed,
-            tile: tileSize(in: size),
+            tile: windows[index].tileSize(in: cellSize(in: size)),
             in: size
         )
     }
@@ -262,11 +287,13 @@ final class OverviewModel {
         guard dragStart != nil else { return }
         dragStart = nil
         draggingID = nil
-        layoutStore.save(windows)
+        layoutStore.save(windows, stackOrder: stackOrder)
     }
 
     func resetLayout() {
         layoutStore.reset()
+        stackOrder.removeAll()
+        stackCounter = 0
         for index in windows.indices {
             windows[index].normalizedCenter = nil
         }

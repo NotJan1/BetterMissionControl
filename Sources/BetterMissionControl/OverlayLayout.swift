@@ -13,12 +13,45 @@ enum OverlayLayout {
     static let labelSpacing: CGFloat = 6
     static let cornerRadius: CGFloat = 10
 
-    /// The part of a cell the thumbnail itself occupies.
-    ///
-    /// Capture sizing and rendering both go through this, so a thumbnail is
-    /// always captured for the size it will actually be drawn at.
+    /// The part of a cell available to the thumbnail, before its own aspect
+    /// ratio is taken into account.
     static func imageArea(of cell: CGSize) -> CGSize {
         CGSize(width: cell.width, height: max(40, cell.height - labelHeight - labelSpacing))
+    }
+
+    /// The exact size a window's thumbnail is drawn at.
+    ///
+    /// Computed rather than left to SwiftUI's `.aspectRatio` + `.frame(max:)`:
+    /// a flexible frame is *greedy*, so it expands to whatever the cell offers
+    /// instead of capping, which stretched tiles to the full height of the
+    /// screen whenever few windows made cells tall.
+    static func thumbnailSize(aspect: CGFloat, native: CGSize, in cell: CGSize) -> CGSize {
+        let area = imageArea(of: cell)
+        let safeAspect = max(aspect, 0.01)
+
+        var size = CGSize(width: area.width, height: area.width / safeAspect)
+        if size.height > area.height {
+            size = CGSize(width: area.height * safeAspect, height: area.height)
+        }
+        // Never larger than the window itself — there'd be no extra detail to
+        // show, so scaling it up would only look soft.
+        if native.width > 0, size.width > native.width {
+            size = native
+        }
+        return size
+    }
+
+    /// Thumbnail plus its label: the tile's real bounds.
+    ///
+    /// Tiles are framed to this rather than to the whole cell, so a tile's
+    /// clickable and draggable area matches what's actually drawn instead of
+    /// spilling over its neighbours.
+    static func tileSize(aspect: CGFloat, native: CGSize, in cell: CGSize) -> CGSize {
+        let thumbnail = thumbnailSize(aspect: aspect, native: native, in: cell)
+        return CGSize(
+            width: thumbnail.width,
+            height: thumbnail.height + labelSpacing + labelHeight
+        )
     }
 
     /// Aims for a block of tiles roughly as wide-to-tall as the screen, which
@@ -56,15 +89,19 @@ enum OverlayLayout {
         let rows = rowCount(for: count, columns: columns)
         let cell = cellSize(count: count, in: size)
 
-        // Centre the whole block in the overlay.
-        let blockWidth = CGFloat(columns) * cell.width + CGFloat(columns - 1) * spacing
         let blockHeight = CGFloat(rows) * cell.height + CGFloat(rows - 1) * spacing
-        let originX = (size.width - blockWidth) / 2
         let originY = (size.height - blockHeight) / 2
 
         return (0 ..< count).map { index in
             let column = index % columns
             let row = index / columns
+            // Each row is centred on its own contents, so a part-filled last
+            // row sits under the middle of the block rather than hugging the
+            // left edge and leaving a void beside it.
+            let itemsInRow = min(columns, count - row * columns)
+            let rowWidth = CGFloat(itemsInRow) * cell.width + CGFloat(itemsInRow - 1) * spacing
+            let originX = (size.width - rowWidth) / 2
+
             let x = originX + CGFloat(column) * (cell.width + spacing) + cell.width / 2
             let y = originY + CGFloat(row) * (cell.height + spacing) + cell.height / 2
             return CGPoint(x: x / size.width, y: y / size.height)

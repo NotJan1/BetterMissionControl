@@ -7,6 +7,9 @@ struct WindowTileView: View {
     let isSelected: Bool
     let isHovering: Bool
     let isDragging: Bool
+    /// Exact drawn size, computed by `OverlayLayout` rather than inferred from
+    /// the layout system, so the tile always matches the window's proportions.
+    let thumbnailSize: CGSize
     let onHover: (Bool) -> Void
     let onActivate: () -> Void
     let onClose: () -> Void
@@ -47,12 +50,7 @@ struct WindowTileView: View {
                 placeholder
             }
         }
-        .aspectRatio(window.aspectRatio, contentMode: .fit)
-        // Never draw a window larger than it actually is. A small window
-        // stretched to fill a large tile has no more detail to show, so it
-        // just looks blurry — better to leave it at native size, which is
-        // also what native Mission Control does.
-        .frame(maxWidth: window.frame.width, maxHeight: window.frame.height)
+        .frame(width: thumbnailSize.width, height: thumbnailSize.height)
         .overlay(selectionRing)
         .overlay(alignment: .topLeading) { closeButton }
         // Lifting the tile while it's dragged makes it read as picked up,
@@ -123,8 +121,11 @@ struct WindowTileView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
+        // Opaque enough to stay readable when tiles overlap — a translucent
+        // capsule let the label underneath bleed through and the two ran
+        // together into nonsense.
         .background {
-            Capsule().fill(Color.black.opacity(isSelected ? 0.55 : 0.35))
+            Capsule().fill(Color.black.opacity(isSelected ? 0.85 : 0.7))
         }
         .frame(height: OverlayLayout.labelHeight)
     }

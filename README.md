@@ -178,5 +178,13 @@ BMC_SELFTEST=match dist/BetterMissionControl.app/Contents/MacOS/BetterMissionCon
 Modes: `list`, `match` (window matching, non-destructive), `close`, `minimize`,
 `key` (Cmd-W through the real key handler), `focus` (does the panel take
 keyboard focus), `drag` and `persist` (free-form positions), `thumbs` (capture
-resolution vs rendered size), `hotkey`, `settings`, `settingsui`. Set
-`BMC_SELFTEST_APP` to pick a target app where a mode needs one.
+resolution and tile aspect vs rendered size), `zorder`, `hotkey`, `settings`,
+`settingsui`. Set `BMC_SELFTEST_APP` to pick a target app where a mode needs
+one.
+
+`screenshot` mode is the useful one for checking appearance — it opens the
+overlay, captures it to PNG, drags a tile over another and captures again:
+
+```bash
+BMC_SELFTEST=screenshot BMC_SELFTEST_OUT=/tmp dist/BetterMissionControl.app/Contents/MacOS/BetterMissionControl
+```

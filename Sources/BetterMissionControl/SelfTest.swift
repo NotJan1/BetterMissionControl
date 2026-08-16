@@ -2,6 +2,8 @@ import AppKit
 import ApplicationServices
 import Carbon.HIToolbox
 import CoreGraphics
+import ImageIO
+import ScreenCaptureKit
 
 /// Headless exercise of the real enumeration and action code paths.
 ///
@@ -158,25 +160,24 @@ enum SelfTest {
             let model = controller.debugModel
             let size = model.overlaySize
             let scale = WindowEnumerator.screenUnderCursor().backingScaleFactor
-            let cell = model.tileSize(in: size)
+            let cell = model.cellSize(in: size)
             log("overlay=\(Int(size.width))x\(Int(size.height)) backingScale=\(scale) windows=\(model.windows.count)")
-            log("tile cell=\(Int(cell.width))x\(Int(cell.height)) points")
+            log("grid cell=\(Int(cell.width))x\(Int(cell.height)) points")
 
             for window in model.windows {
                 guard let image = window.thumbnail else {
                     log("  '\(window.appName)' NO THUMBNAIL"); continue
                 }
-                // Fit the window's aspect into the cell's image area.
-                let imageArea = OverlayLayout.imageArea(of: cell)
-                let aspect = window.aspectRatio
-                var drawn = CGSize(width: imageArea.width, height: imageArea.width / aspect)
-                if drawn.height > imageArea.height {
-                    drawn = CGSize(width: imageArea.height * aspect, height: imageArea.height)
-                }
-                // Matches the tile view's cap at the window's native size.
-                if drawn.width > window.frame.width {
-                    drawn = CGSize(width: window.frame.width, height: window.frame.height)
-                }
+                let drawn = window.thumbnailSize(in: cell)
+                // A tile that ignores the window's proportions is the bug that
+                // stretched tiles to full screen height.
+                let drawnAspect = drawn.width / max(drawn.height, 1)
+                let matches = abs(drawnAspect - window.aspectRatio) < 0.02
+                log(String(
+                    format: "  '%@' aspect window=%.3f tile=%.3f %@",
+                    window.appName, window.aspectRatio, drawnAspect,
+                    matches ? "OK" : "MISMATCH (stretched)"
+                ))
                 let neededPx = drawn.width * scale
                 let ratio = CGFloat(image.width) / neededPx
                 let verdict = ratio >= 0.99 ? "sharp" : String(format: "SOFT (%.0f%% of needed)", ratio * 100)
@@ -277,6 +278,74 @@ enum SelfTest {
             exit(0)
         }
 
+        // The most recently dragged tile should sit on top, and stay there.
+        if mode == "zorder" {
+            let controller = OverlayController()
+            controller.show()
+            try? await Task.sleep(for: .seconds(2))
+            let model = controller.debugModel
+            let size = model.overlaySize
+            guard model.windows.count >= 2 else { log("FAIL: need 2+ windows"); exit(1) }
+
+            log("initial z: " + model.windows.map { "\($0.appName)=\(Int(model.zIndex(for: $0)))" }.joined(separator: " "))
+
+            // Drag the *first* tile; it should end up above the others.
+            let first = model.windows[0]
+            model.beginDrag(first)
+            model.updateDrag(first, translation: CGSize(width: 40, height: 40), in: size)
+            model.endDrag()
+            let afterFirst = model.zIndex(for: first)
+            let others = model.windows.dropFirst().map { model.zIndex(for: $0) }
+            log("after dragging '\(first.appName)': its z=\(Int(afterFirst)), others=\(others.map { Int($0) })")
+            log(others.allSatisfy { afterFirst > $0 } ? "RESULT: dragged tile is on top" : "RESULT: dragged tile NOT on top")
+
+            // Now drag a different one; it should take the top instead.
+            let second = model.windows[1]
+            model.beginDrag(second)
+            model.updateDrag(second, translation: CGSize(width: -40, height: 40), in: size)
+            model.endDrag()
+            let secondZ = model.zIndex(for: second)
+            log("after dragging '\(second.appName)': its z=\(Int(secondZ)), previous=\(Int(model.zIndex(for: first)))")
+            log(secondZ > model.zIndex(for: first)
+                ? "RESULT: most recent drag wins" : "RESULT: stacking did NOT update")
+            exit(0)
+        }
+
+        // Captures the overlay to a PNG so it can actually be looked at.
+        // Only possible because the panel isn't excluded from screen capture.
+        if mode == "screenshot" {
+            let directory = env["BMC_SELFTEST_OUT"] ?? NSTemporaryDirectory()
+            let controller = OverlayController()
+            controller.show()
+            try? await Task.sleep(for: .seconds(3))
+            let model = controller.debugModel
+            log("overlay showing with \(model.windows.count) window(s)")
+            await capture(to: "\(directory)/overlay-1-auto.png")
+
+            // Drag one tile over another so overlap and stacking are visible.
+            if model.windows.count >= 2 {
+                let size = model.overlaySize
+                let target = model.windows[0]
+                let neighbour = model.windows[1]
+                if let from = target.normalizedCenter, let to = neighbour.normalizedCenter {
+                    model.beginDrag(target)
+                    model.updateDrag(
+                        target,
+                        translation: CGSize(
+                            width: (to.x - from.x) * size.width * 0.75,
+                            height: (to.y - from.y) * size.height * 0.75
+                        ),
+                        in: size
+                    )
+                    model.endDrag()
+                    log("dragged '\(target.appName)' toward '\(neighbour.appName)'")
+                }
+                try? await Task.sleep(for: .milliseconds(900))
+                await capture(to: "\(directory)/overlay-2-dragged.png")
+            }
+            exit(0)
+        }
+
         guard mode != "list" else { exit(0) }
 
         guard let targetApp else {
@@ -338,6 +407,37 @@ enum SelfTest {
             return (identifier, HotKeyCombo(keyCode: UInt32(keyCode), carbonModifiers: carbon))
         }
         return nil
+    }
+
+    /// Screenshots the whole display, overlay included, and writes a PNG.
+    private static func capture(to path: String) async {
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
+              let display = content.displays.first else {
+            log("capture failed: no display")
+            return
+        }
+        let configuration = SCStreamConfiguration()
+        configuration.width = display.width
+        configuration.height = display.height
+        configuration.showsCursor = false
+
+        guard let image = try? await SCScreenshotManager.captureImage(
+            contentFilter: SCContentFilter(display: display, excludingWindows: []),
+            configuration: configuration
+        ) else {
+            log("capture failed: SCScreenshotManager returned nil")
+            return
+        }
+
+        let url = URL(fileURLWithPath: path)
+        guard let destination = CGImageDestinationCreateWithURL(
+            url as CFURL, "public.png" as CFString, 1, nil
+        ) else {
+            log("capture failed: could not create destination at \(path)")
+            return
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        log(CGImageDestinationFinalize(destination) ? "wrote \(path)" : "capture failed: could not finalize")
     }
 
     private static func describe(_ point: CGPoint?) -> String {
