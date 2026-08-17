@@ -64,9 +64,22 @@ final class OverlayController {
         model.start()
         installKeyMonitor()
 
-        // After the panel is up, so the Apple-events round-trip can't delay
-        // the overview appearing.
-        DispatchQueue.main.async { DockVisibility.show() }
+        // Deliberately last in the sequence, and only once the tiles have
+        // finished flying into place.
+        //
+        // Revealing the Dock makes macOS reflow windows that were sized around
+        // its absence. Doing it up front meant that reflow happened in plain
+        // sight — Dock slides in, windows jump, *then* the overview appears —
+        // and it also moved the very windows the open animation flies the
+        // tiles out of, so they started from stale positions. Held until the
+        // reveal is done, the reflow happens behind an overlay that's already
+        // drawn.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(620))
+            // Dismissed in the meantime — leave the Dock alone.
+            guard let self, self.isVisible else { return }
+            DockVisibility.show()
+        }
 
         // `NSApp.activate()` alone is a *cooperative* request, and macOS is
         // free to ignore it for a background/accessory app — which it does

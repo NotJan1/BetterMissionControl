@@ -61,7 +61,11 @@ Control's own ⌃↑ so both don't fire at once.
 | Esc, or click the background | Dismiss with nothing changed |
 | Drag a tile | Move it anywhere in the overlay — remembered for next time |
 | Middle-click a tile | Close that window |
-| Hover a tile | Reveals its window controls |
+| Hover a tile | Highlights it and reveals its window controls |
+
+Hovering highlights, the way Mission Control does, so Return always acts on
+whatever the pointer is over. Arrow keys still move the highlight — a
+stationary pointer sends no hover events to fight back.
 
 Each tile shows four controls on hover or selection, following AltTab's
 arrangement — purple first, then the window's own traffic lights:
@@ -143,6 +147,12 @@ own auto-hide setting off for the duration and puts it straight back — through
 System Events, which the Dock applies live (writing the preference directly
 would need the Dock restarted, which flashes the screen). macOS asks once for
 Automation permission.
+
+The change is made *last*, once the tiles have finished flying into place.
+Revealing the Dock makes macOS reflow windows that were sized around its
+absence, and doing it up front put that reflow in plain sight — Dock slides in,
+windows jump, then the overview appears. It also moved the very windows the
+open animation flies the tiles out of, so they started from stale positions.
 
 Because that's a real system setting, it's restored when the overlay closes,
 again when the app quits, and — if the app is ever killed mid-overlay — on the

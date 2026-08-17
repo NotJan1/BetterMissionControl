@@ -139,6 +139,11 @@ struct OverlayView: View {
                 guard model.draggingID == nil else { return }
                 if inside {
                     model.hoveredID = window.id
+                    // Matches Mission Control: whatever the pointer is over is
+                    // the highlighted window, so Return acts on what you're
+                    // looking at. Arrow keys still move the highlight — a
+                    // stationary pointer sends no hover events to fight back.
+                    model.selectedID = window.id
                 } else if model.hoveredID == window.id {
                     model.hoveredID = nil
                 }
@@ -178,7 +183,6 @@ struct OverlayView: View {
     private var appleMissionControlButton: some View {
         VStack {
             HStack {
-                Spacer()
                 Button(action: onOpenAppleMissionControl) {
                     HStack(spacing: 6) {
                         Image(systemName: "square.grid.2x2")
@@ -194,10 +198,14 @@ struct OverlayView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Close this and open Apple's Mission Control instead")
+                Spacer()
             }
             Spacer()
         }
-        .padding(20)
+        // Sits clear of the menu bar, which now draws over the overlay, so the
+        // button doesn't crowd the clock or the status items.
+        .padding(.horizontal, 24)
+        .padding(.top, 56)
     }
 
     private func banner(_ text: String) -> some View {
