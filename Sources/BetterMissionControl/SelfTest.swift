@@ -93,6 +93,25 @@ enum SelfTest {
                 log("panel canBecomeKey=\(window.canBecomeKey) acceptsFirstResponder=\(window.contentView?.acceptsFirstResponder ?? false)")
             }
             log("NSApp.keyWindow=\(NSApp.keyWindow.map { String(describing: type(of: $0)) } ?? "nil")")
+
+            // The Dock has to end up above the overlay, or an auto-hiding Dock
+            // reveals itself behind it and may as well not have appeared.
+            log("dock level=\(CGWindowLevelForKey(.dockWindow)) menuBar level=\(CGWindowLevelForKey(.mainMenuWindow))")
+            let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+            var overlayLayer: Int?
+            var dockLayer: Int?
+            for entry in onScreen {
+                let owner = entry[kCGWindowOwnerName as String] as? String ?? ""
+                let layer = entry[kCGWindowLayer as String] as? Int ?? -999
+                if owner.contains("Better Mission"), overlayLayer == nil { overlayLayer = layer }
+                if owner == "Dock", dockLayer == nil || layer > (dockLayer ?? -999) { dockLayer = layer }
+            }
+            log("overlay window layer=\(overlayLayer.map(String.init) ?? "not found"), Dock layer=\(dockLayer.map(String.init) ?? "not found")")
+            if let overlayLayer, let dockLayer {
+                log(dockLayer > overlayLayer
+                    ? "RESULT: Dock draws above the overlay"
+                    : "RESULT: Dock is BEHIND the overlay")
+            }
             exit(0)
         }
 
@@ -576,6 +595,84 @@ enum SelfTest {
             check("reversal below threshold count", ups == 1 && downs == 2)
 
             SwipeRecognizer.fire = nil
+            exit(0)
+        }
+
+        // Does an auto-hiding Dock reveal itself over the overlay?
+        // The cursor is nudged to the Dock's hot edge and put straight back.
+        if mode == "dock" {
+            let directory = env["BMC_SELFTEST_OUT"] ?? NSTemporaryDirectory()
+            let controller = OverlayController()
+            controller.show()
+            try? await Task.sleep(for: .seconds(2))
+
+            func dockWindow() -> (layer: Int, height: Int)? {
+                let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+                for entry in onScreen where (entry[kCGWindowOwnerName as String] as? String) == "Dock" {
+                    let bounds = entry[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
+                    // The Dock process owns several windows; the visible bar is
+                    // the one with real height.
+                    let height = Int(bounds["Height"] ?? 0)
+                    guard height > 20 else { continue }
+                    return (entry[kCGWindowLayer as String] as? Int ?? -999, height)
+                }
+                return nil
+            }
+
+            log("autohide setting: \(UserDefaults(suiteName: "com.apple.dock")?.bool(forKey: "autohide") == true ? "on" : "off")")
+            let screen = WindowEnumerator.screenUnderCursor().frame
+            let restore = NSEvent.mouseLocation
+
+            /// Walks the pointer down to the Dock's hot edge with real move
+            /// events. A plain warp teleports the cursor without posting one,
+            /// and the Dock only reveals on movement.
+            func nudgeToBottomEdge() async {
+                for step in stride(from: 60.0, through: 0.0, by: -12.0) {
+                    let point = CGPoint(x: screen.midX, y: screen.maxY - step)
+                    CGEvent(
+                        mouseEventSource: nil,
+                        mouseType: .mouseMoved,
+                        mouseCursorPosition: point,
+                        mouseButton: .left
+                    )?.post(tap: .cghidEventTap)
+                    try? await Task.sleep(for: .milliseconds(40))
+                }
+                try? await Task.sleep(for: .milliseconds(800))
+            }
+
+            // Control: with the overlay hidden, does the nudge work at all?
+            controller.hide()
+            try? await Task.sleep(for: .milliseconds(700))
+            await nudgeToBottomEdge()
+            let control = dockWindow()
+            log("CONTROL (no overlay): Dock visible = \(control != nil)\(control.map { " layer=\($0.layer)" } ?? "")")
+
+            // Move away so the Dock re-hides, then repeat with the overlay up.
+            CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                    mouseCursorPosition: CGPoint(x: screen.midX, y: screen.midY),
+                    mouseButton: .left)?.post(tap: .cghidEventTap)
+            try? await Task.sleep(for: .seconds(1))
+
+            controller.show()
+            try? await Task.sleep(for: .seconds(2))
+            await nudgeToBottomEdge()
+
+            if let dock = dockWindow() {
+                log("WITH OVERLAY: Dock visible = yes (layer=\(dock.layer), height=\(dock.height))")
+                log(dock.layer > 19
+                    ? "RESULT: Dock reveals ABOVE the overlay"
+                    : "RESULT: Dock revealed but sits BEHIND the overlay (layer \(dock.layer))")
+            } else if control != nil {
+                log("RESULT: the nudge works, but the overlay stops the Dock revealing")
+            } else {
+                log("RESULT: inconclusive — the Dock didn't reveal even without the overlay")
+            }
+            await capture(to: "\(directory)/dock.png")
+
+            // Put the pointer back (mouseLocation is y-up, events are y-down).
+            CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                    mouseCursorPosition: CGPoint(x: restore.x, y: screen.maxY - restore.y),
+                    mouseButton: .left)?.post(tap: .cghidEventTap)
             exit(0)
         }
 

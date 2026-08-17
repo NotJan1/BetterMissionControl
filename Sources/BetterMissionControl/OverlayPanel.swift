@@ -16,8 +16,14 @@ final class OverlayPanel: NSPanel {
             defer: false
         )
 
-        // Above the menu bar, so nothing shows through the overlay.
-        level = NSWindow.Level(Int(CGWindowLevelForKey(.mainMenuWindow)) + 1)
+        // Just under the Dock (level 20), which puts the overlay above every
+        // ordinary window but below the Dock and the menu bar.
+        //
+        // Sitting above them, as this used to, meant an auto-hiding Dock
+        // revealed itself *behind* the overlay and stayed invisible. Dropping
+        // below is also closer to the real Mission Control, which leaves both
+        // the Dock and the menu bar on top of the dimmed desktop.
+        level = NSWindow.Level(Int(CGWindowLevelForKey(.dockWindow)) - 1)
         collectionBehavior = [
             .canJoinAllSpaces,      // present regardless of the active Space
             .fullScreenAuxiliary,   // and over full-screen apps
