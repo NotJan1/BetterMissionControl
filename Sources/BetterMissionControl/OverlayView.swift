@@ -7,6 +7,7 @@ struct OverlayView: View {
     let hotKeyDisplay: String
     let onDismiss: () -> Void
     let onActivate: (ManagedWindow) -> Void
+    let onOpenAppleMissionControl: () -> Void
 
     var body: some View {
         GeometryReader { geometry in
@@ -20,6 +21,10 @@ struct OverlayView: View {
                     .contentShape(Rectangle())
                     .onTapGesture(perform: onDismiss)
                 content(in: geometry.size)
+
+                if model.isRevealed {
+                    appleMissionControlButton
+                }
 
                 if let message = model.actionMessage {
                     banner(message)
@@ -166,6 +171,33 @@ struct OverlayView: View {
             .onEnded { _ in
                 model.endDrag()
             }
+    }
+
+    /// Escape hatch: dismiss this and hand over to Apple's own Mission
+    /// Control. The app keeps running, so the next summon behaves normally.
+    private var appleMissionControlButton: some View {
+        VStack {
+            HStack {
+                Spacer()
+                Button(action: onOpenAppleMissionControl) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "square.grid.2x2")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Apple's Mission Control")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(.black.opacity(0.5), in: Capsule())
+                    .overlay(Capsule().strokeBorder(.white.opacity(0.16)))
+                    .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                .help("Close this and open Apple's Mission Control instead")
+            }
+            Spacer()
+        }
+        .padding(20)
     }
 
     private func banner(_ text: String) -> some View {

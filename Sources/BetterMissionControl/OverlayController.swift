@@ -37,6 +37,12 @@ final class OverlayController {
             onActivate: { [weak self] window in
                 self?.model.activate(window)
                 self?.hide(returningFocus: false)
+            },
+            onOpenAppleMissionControl: { [weak self] in
+                // Dismiss without quitting: the app stays running and the next
+                // summon behaves normally.
+                self?.hide()
+                AppleMissionControl.open()
             }
         )
         panel.contentView = NSHostingView(rootView: root)
@@ -58,6 +64,10 @@ final class OverlayController {
         model.start()
         installKeyMonitor()
 
+        // After the panel is up, so the Apple-events round-trip can't delay
+        // the overview appearing.
+        DispatchQueue.main.async { DockVisibility.show() }
+
         // `NSApp.activate()` alone is a *cooperative* request, and macOS is
         // free to ignore it for a background/accessory app — which it does
         // here, leaving the panel visible but never key. A panel that isn't
@@ -76,6 +86,7 @@ final class OverlayController {
     ///   activation the user just asked for.
     func hide(returningFocus: Bool = true) {
         guard let panel else { return }
+        DockVisibility.restore()
         removeKeyMonitor()
         model.stop()
         panel.orderOut(nil)

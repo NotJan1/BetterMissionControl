@@ -18,6 +18,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Menu bar utility: no Dock icon.
         NSApp.setActivationPolicy(.accessory)
 
+        // If a previous run was killed with the overlay open, the Dock is
+        // still stuck visible — put it back before anything else.
+        DockVisibility.recoverIfInterrupted()
+
         if SelfTest.isRequested {
             Task { await SelfTest.run() }
             return
@@ -56,6 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         hotKeyManager?.unregister()
+        // Never leave the Dock stuck visible because the app went away with
+        // the overlay open.
+        DockVisibility.restore()
     }
 
     // MARK: - Menus
@@ -167,15 +174,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Show the explanation on first launch, and on any later launch where a
-    /// permission still isn't granted — otherwise the hotkey would appear to
+    /// permission really isn't granted — otherwise the hotkey would appear to
     /// do nothing.
     private func showWelcomeIfNeeded(hotKeyDisplay: String) {
         let defaults = UserDefaults.standard
         let firstLaunch = !defaults.bool(forKey: DefaultsKey.hasLaunchedBefore)
         defaults.set(true, forKey: DefaultsKey.hasLaunchedBefore)
 
-        if firstLaunch || !PermissionsManager.allGranted {
+        if firstLaunch {
             welcome.show(hotKeyDisplay: hotKeyDisplay)
+            return
+        }
+        guard !PermissionsManager.allGranted else { return }
+
+        // Asked this early, TCC can answer "not granted" for a moment before
+        // it has resolved permissions for the freshly launched process — which
+        // is why the welcome window reappeared after every rebuild even though
+        // both switches were still on in System Settings. Confirm the answer
+        // is stable before interrupting anyone.
+        Task { @MainActor [weak self] in
+            for _ in 0 ..< 6 {
+                try? await Task.sleep(for: .milliseconds(400))
+                if PermissionsManager.allGranted { return }
+            }
+            self?.welcome.show(hotKeyDisplay: hotKeyDisplay)
         }
     }
 }

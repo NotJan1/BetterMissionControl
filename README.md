@@ -7,11 +7,19 @@ See [CLAUDE.md](CLAUDE.md) for the full product requirements.
 
 ## Build and run
 
+First time only, create a local signing identity:
+
+```bash
+./scripts/create-signing-identity.sh
+```
+
+Then build and run:
+
 ```bash
 ./build.sh run
 ```
 
-That compiles, assembles `dist/BetterMissionControl.app`, ad-hoc signs it and
+That compiles, assembles `dist/BetterMissionControl.app`, signs it and
 launches it. `./build.sh` alone builds without launching; `./build.sh release`
 makes an optimised build.
 
@@ -125,6 +133,35 @@ Control → Off), or both open at once. That isn't a preference: reading contact
 is passive, so the swipe can be observed but never taken, and macOS acts on it
 regardless. Settings says so and links straight to the pane.
 
+### The Dock
+
+While the overview is open the Dock stays visible, then goes back to hiding
+itself afterwards.
+
+There's no public API to reveal an auto-hidden Dock, so this turns the Dock's
+own auto-hide setting off for the duration and puts it straight back — through
+System Events, which the Dock applies live (writing the preference directly
+would need the Dock restarted, which flashes the screen). macOS asks once for
+Automation permission.
+
+Because that's a real system setting, it's restored when the overlay closes,
+again when the app quits, and — if the app is ever killed mid-overlay — on the
+next launch, from a flag left on disk. If auto-hide was already off, nothing is
+touched at all.
+
+The overlay also sits just *below* the Dock's window level, so the Dock draws
+over it rather than behind it. One consequence: the menu bar shows over the
+overlay too, since the Dock sits at a lower level than the menu bar and no
+single level is both above one and below the other. Real Mission Control shows
+both as well.
+
+### Apple's Mission Control
+
+A button in the top right closes the overview and opens Apple's own Mission
+Control instead. The app keeps running — the next summon behaves normally.
+Useful when the F3 key is bound to this app, since that's otherwise the only
+way to reach Apple's version.
+
 ### The F3 key
 
 Settings has a switch for it. Turn it on and F3 opens this instead of Apple's
@@ -210,10 +247,21 @@ app already requires; no extra permission and no driver.
   it, the switch turns itself off and explains why. The fix is to leave it off,
   not to chase Apple's internals.
 
-- **Ad-hoc code signature.** The signature changes whenever the code does, and
-  macOS ties granted permissions to it — so after a rebuild you may have to
-  re-tick the app in System Settings › Privacy & Security. A Developer ID
-  certificate at release time removes this.
+- **A local self-signed certificate, not ad-hoc.** This one is worth knowing
+  about because the symptom is baffling: with an ad-hoc signature every rebuild
+  made macOS re-ask for Screen Recording and Accessibility, while both switches
+  stayed *on* in System Settings. macOS records the exact code hash when a
+  permission is granted, and an ad-hoc signature has no identity beyond that
+  hash — so any rebuild looked like a different app and was quietly denied.
+  Signing with a certificate makes the recorded requirement
+  `identifier "…" and certificate leaf = H"…"`, which is identical across
+  builds, so the grants survive. A Developer ID certificate replaces it at
+  release time.
+
+  The certificate is self-signed, lives only in your login keychain and is not
+  trusted by anything else — `security find-identity -v` won't even list it.
+  That's expected: signing doesn't require trust. Remove it with
+  `security delete-certificate -c "Better Mission Control Dev"`.
 
 ## Not in v1
 

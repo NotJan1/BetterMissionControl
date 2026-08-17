@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Better Mission Control turns the Dock's auto-hide off while the overview is open, so the Dock stays visible, and turns it back on afterwards.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 Jan Szalinski. All rights reserved.</string>
 </dict>

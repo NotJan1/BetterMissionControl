@@ -602,6 +602,12 @@ enum SelfTest {
         // The cursor is nudged to the Dock's hot edge and put straight back.
         if mode == "dock" {
             let directory = env["BMC_SELFTEST_OUT"] ?? NSTemporaryDirectory()
+            // Read the setting before anything touches it — opening the
+            // overlay changes it, so reading afterwards is meaningless.
+            let autohideAtStart = UserDefaults(suiteName: "com.apple.dock")?
+                .bool(forKey: "autohide") ?? false
+            log("autohide at start (before the overlay opened): \(autohideAtStart)")
+
             let controller = OverlayController()
             controller.show()
             try? await Task.sleep(for: .seconds(2))
@@ -619,7 +625,51 @@ enum SelfTest {
                 return nil
             }
 
-            log("autohide setting: \(UserDefaults(suiteName: "com.apple.dock")?.bool(forKey: "autohide") == true ? "on" : "off")")
+            func autohide() -> Bool {
+                UserDefaults(suiteName: "com.apple.dock")?.bool(forKey: "autohide") ?? false
+            }
+            log("autohide before: \(autohide())")
+
+            // The real mechanism: turn auto-hide off for the overlay's sake.
+            DockVisibility.show()
+            try? await Task.sleep(for: .milliseconds(1200))
+            log("autohide while overlay open: \(autohide())")
+            if let error = DockVisibility.lastError {
+                log("FAIL: \(error)")
+            }
+            if let dock = dockWindow() {
+                log("Dock on screen: yes (layer=\(dock.layer), height=\(dock.height))")
+                log(dock.layer > 19
+                    ? "RESULT: Dock is visible ABOVE the overlay"
+                    : "RESULT: Dock visible but BEHIND the overlay (layer \(dock.layer))")
+            } else {
+                log("RESULT: Dock still not on screen")
+            }
+            await capture(to: "\(directory)/dock.png")
+
+            DockVisibility.restore()
+            try? await Task.sleep(for: .milliseconds(1200))
+            log("autohide after restore: \(autohide())")
+            log(autohide() ? "RESULT: setting restored" : "RESULT: setting NOT restored")
+            exit(0)
+        }
+
+        // Older cursor-based probe, kept for reference.
+        if mode == "docknudge" {
+            let directory = env["BMC_SELFTEST_OUT"] ?? NSTemporaryDirectory()
+            let controller = OverlayController()
+            controller.show()
+            try? await Task.sleep(for: .seconds(2))
+            func dockWindow() -> (layer: Int, height: Int)? {
+                let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+                for entry in onScreen where (entry[kCGWindowOwnerName as String] as? String) == "Dock" {
+                    let bounds = entry[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
+                    let height = Int(bounds["Height"] ?? 0)
+                    guard height > 20 else { continue }
+                    return (entry[kCGWindowLayer as String] as? Int ?? -999, height)
+                }
+                return nil
+            }
             let screen = WindowEnumerator.screenUnderCursor().frame
             let restore = NSEvent.mouseLocation
 

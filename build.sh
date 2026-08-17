@@ -42,14 +42,27 @@ cp "$BIN_PATH" "$APP/Contents/MacOS/$APP_NAME"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-# Ad-hoc signature. Enough for local use; a Developer ID certificate replaces
-# the '-' identity at release time, alongside notarytool.
+# Sign with the local self-signed identity if it exists, falling back to
+# ad-hoc.
 #
-# Note: an ad-hoc signature changes every time the code changes, and macOS ties
-# granted permissions to that signature. After a rebuild you may have to
-# re-tick the app in System Settings > Privacy & Security.
-echo "==> Signing (ad-hoc)"
-codesign --force --sign - --timestamp=none "$APP" >/dev/null 2>&1
+# This matters more than it looks. An ad-hoc signature has no stable identity,
+# and macOS ties granted permissions to the exact code hash — so every rebuild
+# looks like a brand new app and Screen Recording and Accessibility are quietly
+# denied, while their switches stay on in System Settings. A real certificate
+# gives the app a fixed identity and the grants survive rebuilds.
+#
+# Run ./scripts/create-signing-identity.sh once to set it up. A Developer ID
+# certificate replaces it for release builds, alongside notarytool.
+IDENTITY="Better Mission Control Dev"
+if security find-identity -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
+  echo "==> Signing as '$IDENTITY'"
+  codesign --force --sign "$IDENTITY" --timestamp=none "$APP" >/dev/null 2>&1
+else
+  echo "==> Signing (ad-hoc)"
+  echo "    Tip: run ./scripts/create-signing-identity.sh once and macOS will"
+  echo "    stop asking for permissions again after every rebuild."
+  codesign --force --sign - --timestamp=none "$APP" >/dev/null 2>&1
+fi
 
 echo "==> Built $APP"
 
