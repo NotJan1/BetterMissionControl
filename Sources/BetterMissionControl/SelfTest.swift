@@ -342,6 +342,12 @@ enum SelfTest {
             try? await Task.sleep(for: .seconds(3))
             let model = controller.debugModel
             log("overlay showing with \(model.windows.count) window(s)")
+            // Confirm the panel is actually on screen before capturing —
+            // otherwise a capture of the plain desktop looks like a rendering
+            // bug when really the overlay was never up.
+            let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+            let ours = onScreen.filter { ($0[kCGWindowOwnerName as String] as? String ?? "").contains("Better Mission") }
+            log("panel on screen: \(!ours.isEmpty) (\(ours.count) window(s), isVisible=\(controller.isVisible))")
             await capture(to: "\(directory)/overlay-1-auto.png")
 
             // Drag one tile over another so overlap and stacking are visible.

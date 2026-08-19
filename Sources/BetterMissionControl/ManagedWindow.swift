@@ -60,6 +60,11 @@ struct ManagedWindow: Identifiable {
         OverlayLayout.thumbnailSize(aspect: aspectRatio, native: layoutFrame.size, in: cell)
     }
 
+    /// App icon size for this tile.
+    func iconSize(in cell: CGSize) -> CGFloat {
+        OverlayLayout.iconSize(in: cell)
+    }
+
     /// Thumbnail plus label — the tile's actual bounds.
     func tileSize(in cell: CGSize) -> CGSize {
         OverlayLayout.tileSize(aspect: aspectRatio, native: layoutFrame.size, in: cell)

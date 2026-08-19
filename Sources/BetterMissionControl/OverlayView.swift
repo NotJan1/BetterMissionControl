@@ -133,6 +133,7 @@ struct OverlayView: View {
             isHovering: model.hoveredID == window.id,
             isDragging: isDragging,
             thumbnailSize: window.thumbnailSize(in: cell),
+            iconSize: window.iconSize(in: cell),
             onHover: { inside in
                 // Ignored mid-drag: the pointer sweeps across other tiles on
                 // the way, and each hover change invalidates the whole canvas.

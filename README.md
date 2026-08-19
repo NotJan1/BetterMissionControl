@@ -70,6 +70,12 @@ Control's own ⌃↑ so both don't fire at once.
 | Middle-click a tile | Close that window |
 | Hover a tile | Highlights it and reveals its window controls |
 
+Each tile carries a large app icon straddling the bottom edge of its thumbnail,
+with the window title beneath — the way Mission Control marks windows, so you
+pick them out by app rather than by squinting at a shrunken screenshot. The
+icon scales with the tile (34–60pt) so a crowded overview doesn't drown in
+them.
+
 Hovering highlights, the way Mission Control does, so Return always acts on
 whatever the pointer is over. Arrow keys still move the highlight — a
 stationary pointer sends no hover events to fight back.

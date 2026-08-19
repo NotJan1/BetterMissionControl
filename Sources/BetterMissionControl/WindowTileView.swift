@@ -10,6 +10,8 @@ struct WindowTileView: View {
     /// Exact drawn size, computed by `OverlayLayout` rather than inferred from
     /// the layout system, so the tile always matches the window's proportions.
     let thumbnailSize: CGSize
+    /// Size of the app icon straddling the thumbnail's bottom edge.
+    let iconSize: CGFloat
     let onHover: (Bool) -> Void
     let onActivate: () -> Void
     let onClose: () -> Void
@@ -24,6 +26,10 @@ struct WindowTileView: View {
     var body: some View {
         VStack(spacing: OverlayLayout.labelSpacing) {
             thumbnail
+                // The icon hangs half past the bottom edge, so the space it
+                // needs is reserved here rather than eating into the image.
+                .overlay(alignment: .bottom) { appIcon.offset(y: iconSize / 2) }
+                .padding(.bottom, iconSize / 2)
             label
         }
         .contentShape(Rectangle())
@@ -67,6 +73,27 @@ struct WindowTileView: View {
         .animation(.easeOut(duration: 0.12), value: isHovering)
         .animation(.easeOut(duration: 0.14), value: isSelected)
         .animation(.easeOut(duration: 0.12), value: isDragging)
+    }
+
+    /// Large app icon, the way Mission Control marks each window.
+    private var appIcon: some View {
+        Group {
+            if let icon = window.appIcon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+            } else {
+                Image(systemName: "macwindow")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+        }
+        .frame(width: iconSize, height: iconSize)
+        // Reads against any thumbnail behind it, light or dark.
+        .shadow(color: .black.opacity(0.55), radius: 5, y: 2)
+        .scaleEffect(isSelected ? 1.06 : 1)
+        .animation(.easeOut(duration: 0.14), value: isSelected)
     }
 
     private var placeholder: some View {
@@ -154,27 +181,18 @@ struct WindowTileView: View {
     // MARK: - Label
 
     private var label: some View {
-        HStack(spacing: 5) {
-            if let icon = window.appIcon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: 15, height: 15)
-            }
-            Text(window.displayTitle)
-                .font(.system(size: 12))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.82))
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        // Opaque enough to stay readable when tiles overlap — a translucent
-        // capsule let the label underneath bleed through and the two ran
-        // together into nonsense.
-        .background {
-            Capsule().fill(Color.black.opacity(isSelected ? 0.85 : 0.7))
-        }
-        .frame(height: OverlayLayout.labelHeight)
+        Text(window.displayTitle)
+            .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.85))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            // Opaque enough to stay readable when tiles overlap — a translucent
+            // capsule let the label underneath bleed through and the two ran
+            // together into nonsense.
+            .background { Capsule().fill(Color.black.opacity(isSelected ? 0.8 : 0.55)) }
+            .frame(height: OverlayLayout.titleHeight)
     }
 }
 
@@ -188,5 +206,6 @@ extension WindowTileView: Equatable {
             && lhs.isHovering == rhs.isHovering
             && lhs.isDragging == rhs.isDragging
             && lhs.thumbnailSize == rhs.thumbnailSize
+            && lhs.iconSize == rhs.iconSize
     }
 }

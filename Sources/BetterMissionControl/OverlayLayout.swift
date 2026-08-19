@@ -8,15 +8,32 @@ import Foundation
 enum OverlayLayout {
     static let spacing: CGFloat = 26
     static let outerPadding: CGFloat = 72
-    static let labelHeight: CGFloat = 24
-    /// Gap between a tile's thumbnail and its label.
-    static let labelSpacing: CGFloat = 6
+    /// Height of the title line under a tile.
+    static let titleHeight: CGFloat = 20
+    /// Gap between a tile's thumbnail and its title.
+    static let labelSpacing: CGFloat = 4
     static let cornerRadius: CGFloat = 10
+
+    /// App icon size for a tile in the given cell.
+    ///
+    /// Mission Control shows a large icon straddling the bottom edge of each
+    /// thumbnail — at a glance you pick windows out by app, not by squinting
+    /// at a scaled-down screenshot. It scales with the tile so a crowded
+    /// overview doesn't drown in icons, but stays big enough to read.
+    static func iconSize(in cell: CGSize) -> CGFloat {
+        min(max(cell.width * 0.15, 34), 60)
+    }
+
+    /// Vertical room a tile needs below its thumbnail: the half of the icon
+    /// that hangs past the edge, plus the title.
+    static func labelHeight(in cell: CGSize) -> CGFloat {
+        iconSize(in: cell) / 2 + titleHeight
+    }
 
     /// The part of a cell available to the thumbnail, before its own aspect
     /// ratio is taken into account.
     static func imageArea(of cell: CGSize) -> CGSize {
-        CGSize(width: cell.width, height: max(40, cell.height - labelHeight - labelSpacing))
+        CGSize(width: cell.width, height: max(40, cell.height - labelHeight(in: cell) - labelSpacing))
     }
 
     /// The exact size a window's thumbnail is drawn at.
@@ -50,7 +67,7 @@ enum OverlayLayout {
         let thumbnail = thumbnailSize(aspect: aspect, native: native, in: cell)
         return CGSize(
             width: thumbnail.width,
-            height: thumbnail.height + labelSpacing + labelHeight
+            height: thumbnail.height + labelSpacing + labelHeight(in: cell)
         )
     }
 
