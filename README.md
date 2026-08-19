@@ -154,6 +154,14 @@ absence, and doing it up front put that reflow in plain sight — Dock slides in
 windows jump, then the overview appears. It also moved the very windows the
 open animation flies the tiles out of, so they started from stale positions.
 
+The Dock is also put back *before* the chosen window is raised, not after.
+macOS lays a window out for the space available at the moment it comes
+forward, so raising it while the Dock was still being held open left
+full-screen and zoomed windows short by the Dock's height — 92pt on this
+display — once the Dock hid again, cutting off the bottom. Restoring first
+costs nothing: the setting applies synchronously and `visibleFrame` is back to
+full the instant it returns (measured with the `dockframe` self-test).
+
 Because that's a real system setting, it's restored when the overlay closes,
 again when the app quits, and — if the app is ever killed mid-overlay — on the
 next launch, from a flag left on disk. If auto-hide was already off, nothing is
@@ -295,7 +303,7 @@ Modes: `list`, `match` (window matching, non-destructive), `close`, `minimize`,
 `key` (Cmd-W through the real key handler), `focus` (does the panel take
 keyboard focus), `drag` and `persist` (free-form positions), `thumbs` (capture
 resolution and tile aspect vs rendered size), `zorder`, `hotkey`, `settings`,
-`settingsui`, `gesture` (swipe recognition), `input` (guided: what macOS delivers for F3 and four-finger swipes). Set `BMC_SELFTEST_APP` to pick a target app where a mode needs
+`settingsui`, `gesture` (swipe recognition), `dock`, `dockframe` (screen area vs the Dock), `input` (guided: what macOS delivers for F3 and four-finger swipes). Set `BMC_SELFTEST_APP` to pick a target app where a mode needs
 one.
 
 `screenshot` mode is the useful one for checking appearance — it opens the

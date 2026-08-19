@@ -35,8 +35,7 @@ final class OverlayController {
             hotKeyDisplay: hotKeyDisplay,
             onDismiss: { [weak self] in self?.hide() },
             onActivate: { [weak self] window in
-                self?.model.activate(window)
-                self?.hide(returningFocus: false)
+                self?.activateAndDismiss(window)
             },
             onOpenAppleMissionControl: { [weak self] in
                 // Dismiss without quitting: the app stays running and the next
@@ -108,6 +107,23 @@ final class OverlayController {
         if returningFocus {
             NSApp.hide(nil)
         }
+    }
+
+    /// Dismisses and brings the chosen window forward, in that order.
+    ///
+    /// The order is the point. macOS lays a window out for the screen space
+    /// available at the moment it is raised, and while the overview is open
+    /// the Dock is being held visible — so raising a full-screen or zoomed
+    /// window first left it short by the Dock's height once the Dock hid
+    /// itself again, cutting off the bottom.
+    private func activateAndDismiss(_ window: ManagedWindow) {
+        // Putting the Dock back is synchronous, and the screen's usable area
+        // recovers with it — measured with the `dockframe` self-test, the Dock
+        // costs 92pt of height and `visibleFrame` is back to full the instant
+        // this returns. So no waiting is needed, only the right order.
+        DockVisibility.restore()
+        hide(returningFocus: false)
+        model.activate(window)
     }
 
     // MARK: - Keyboard
@@ -182,8 +198,7 @@ final class OverlayController {
             return true
         case kVK_Return, kVK_ANSI_KeypadEnter:               // R6
             guard let window = model.selectedWindow else { return true }
-            model.activate(window)
-            hide(returningFocus: false)
+            activateAndDismiss(window)
             return true
         case kVK_LeftArrow:
             model.moveSelection(.left)

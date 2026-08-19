@@ -37,10 +37,16 @@ enum DockVisibility {
     }
 
     /// Puts auto-hide back, if this changed it.
-    static func restore() {
-        guard UserDefaults.standard.bool(forKey: restorePendingKey) else { return }
+    ///
+    /// Returns true when the Dock was actually put back, so callers can wait
+    /// for the screen to settle before doing anything that depends on how much
+    /// room a window has.
+    @discardableResult
+    static func restore() -> Bool {
+        guard UserDefaults.standard.bool(forKey: restorePendingKey) else { return false }
         setAutohide(true)
         UserDefaults.standard.set(false, forKey: restorePendingKey)
+        return true
     }
 
     /// Called at launch: if a previous run was killed while the overlay was

@@ -726,6 +726,34 @@ enum SelfTest {
             exit(0)
         }
 
+        // How fast does the screen's usable area recover once the Dock is
+        // put back? A window raised before it does gets laid out short.
+        if mode == "dockframe" {
+            func visible() -> CGRect { WindowEnumerator.screenUnderCursor().visibleFrame }
+            func describe(_ r: CGRect) -> String {
+                String(format: "h=%.0f (y=%.0f)", r.height, r.minY)
+            }
+
+            let atRest = visible()
+            log("visibleFrame at rest:        \(describe(atRest))")
+
+            DockVisibility.show()
+            try? await Task.sleep(for: .milliseconds(900))
+            let withDock = visible()
+            log("visibleFrame with Dock shown: \(describe(withDock))")
+            log("Dock costs \(Int(atRest.height - withDock.height))pt of height")
+
+            DockVisibility.restore()
+            for delay in [0, 60, 130, 200, 260, 400, 600] {
+                if delay > 0 { try? await Task.sleep(for: .milliseconds(delay == 60 ? 60 : delay - 0)) }
+                let now = visible()
+                let recovered = abs(now.height - atRest.height) < 1
+                log("  +\(delay)ms: \(describe(now)) \(recovered ? "RECOVERED" : "still short")")
+                if recovered { break }
+            }
+            exit(0)
+        }
+
         guard mode != "list" else { exit(0) }
 
         guard let targetApp else {
