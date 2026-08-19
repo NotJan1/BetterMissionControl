@@ -40,6 +40,11 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_PATH" "$APP/Contents/MacOS/$APP_NAME"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+if [ -f Resources/AppIcon.icns ]; then
+  cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+else
+  echo "    note: no Resources/AppIcon.icns — run ./scripts/make-icon.sh"
+fi
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # Sign with the local self-signed identity if it exists, falling back to

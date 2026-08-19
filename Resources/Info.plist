@@ -6,6 +6,8 @@
 	<string>en</string>
 	<key>CFBundleExecutable</key>
 	<string>BetterMissionControl</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.janszalinski.BetterMissionControl</string>
 	<key>CFBundleInfoDictionaryVersion</key>

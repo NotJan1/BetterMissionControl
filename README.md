@@ -1,11 +1,18 @@
 # Better Mission Control
 
+<img src="Resources/AppIcon.png" width="128" align="right" alt="App icon">
+
 A macOS menu-bar overlay that looks like Mission Control but lets you close,
 minimize, quit and rearrange windows directly from the overview.
 
 See [CLAUDE.md](CLAUDE.md) for the full product requirements.
 
 ## Build and run
+
+The app icon lives at `Resources/AppIcon.png` — a 1024 master with a
+transparent surround and the artwork at Apple's standard 824pt body size.
+`./scripts/make-icon.sh` turns it into `Resources/AppIcon.icns`; rerun it after
+replacing the master.
 
 First time only, create a local signing identity:
 
