@@ -754,6 +754,53 @@ enum SelfTest {
             exit(0)
         }
 
+        // Revealing the Dock reflows every full-height window. The tiles in
+        // front of it must not move or resize when that happens.
+        if mode == "reflow" {
+            let controller = OverlayController()
+            controller.show()
+            try? await Task.sleep(for: .seconds(2))
+            let model = controller.debugModel
+            let size = model.overlaySize
+            let cell = model.cellSize(in: size)
+
+            func geometry() -> [CGWindowID: (tile: CGSize, live: CGRect)] {
+                var out: [CGWindowID: (CGSize, CGRect)] = [:]
+                for w in model.windows { out[w.id] = (w.tileSize(in: cell), w.frame) }
+                return out
+            }
+            // The overlay reveals the Dock itself ~620ms after opening, so by
+            // now the reflow has already happened. Sample here, then put the
+            // Dock back to force the reflow in the other direction.
+            let before = geometry()
+            log("tiles before: \(before.count)")
+
+            DockVisibility.restore()
+            // Long enough for the reflow plus at least one refresh cycle.
+            try? await Task.sleep(for: .seconds(2))
+            let after = geometry()
+
+            var liveChanged = 0, tilesChanged = 0
+            for (id, b) in before {
+                guard let a = after[id] else { continue }
+                if b.live != a.live { liveChanged += 1 }
+                if abs(b.tile.width - a.tile.width) > 0.5 || abs(b.tile.height - a.tile.height) > 0.5 {
+                    tilesChanged += 1
+                    log(String(format: "  tile resized: %.0fx%.0f -> %.0fx%.0f",
+                               b.tile.width, b.tile.height, a.tile.width, a.tile.height))
+                }
+            }
+            log("windows whose live frame reflowed: \(liveChanged)/\(before.count)")
+            log("tiles that changed size: \(tilesChanged)")
+            log(liveChanged == 0
+                ? "INCONCLUSIVE: nothing reflowed, so this proves nothing"
+                : (tilesChanged == 0
+                   ? "RESULT: windows reflowed, tiles held still"
+                   : "RESULT: tiles moved with the reflow"))
+
+            exit(0)
+        }
+
         guard mode != "list" else { exit(0) }
 
         guard let targetApp else {

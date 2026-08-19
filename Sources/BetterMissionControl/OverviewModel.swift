@@ -182,6 +182,9 @@ final class OverviewModel {
             // and the position so a refresh never moves a tile the user placed.
             refreshed.thumbnail = existing.thumbnail
             refreshed.normalizedCenter = existing.normalizedCenter
+            // Keep the geometry the tile was drawn from, so windows reflowing
+            // behind the overlay can't resize the tiles in front of it.
+            refreshed.layoutFrame = existing.layoutFrame
             updated.append(refreshed)
         }
 
@@ -291,8 +294,8 @@ final class OverviewModel {
     /// starting point of the open animation.
     func sourceCenter(for window: ManagedWindow) -> CGPoint {
         CGPoint(
-            x: window.frame.midX - overlayOrigin.x,
-            y: window.frame.midY - overlayOrigin.y
+            x: window.layoutFrame.midX - overlayOrigin.x,
+            y: window.layoutFrame.midY - overlayOrigin.y
         )
     }
 
@@ -300,7 +303,7 @@ final class OverviewModel {
     /// scaled up to match it before animating down into place.
     func sourceScale(for window: ManagedWindow, tile: CGSize) -> CGFloat {
         guard tile.width > 0 else { return 1 }
-        return max(window.frame.width / tile.width, 0.01)
+        return max(window.layoutFrame.width / tile.width, 0.01)
     }
 
     private func scheduleReveal() {

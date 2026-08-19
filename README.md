@@ -162,6 +162,13 @@ display — once the Dock hid again, cutting off the bottom. Restoring first
 costs nothing: the setting applies synchronously and `visibleFrame` is back to
 full the instant it returns (measured with the `dockframe` self-test).
 
+Revealing the Dock also reflows every full-height window — 4 of 5 open windows
+here shrink from 1205 to 1113pt. Tiles are therefore laid out from a
+`layoutFrame` frozen when the window first appears, not from its live frame, so
+the overview holds still instead of every tile changing shape a second after
+opening. The live frame is still what Accessibility matching uses, since that
+has to track where the window really is.
+
 Because that's a real system setting, it's restored when the overlay closes,
 again when the app quits, and — if the app is ever killed mid-overlay — on the
 next launch, from a flag left on disk. If auto-hide was already off, nothing is
@@ -303,7 +310,7 @@ Modes: `list`, `match` (window matching, non-destructive), `close`, `minimize`,
 `key` (Cmd-W through the real key handler), `focus` (does the panel take
 keyboard focus), `drag` and `persist` (free-form positions), `thumbs` (capture
 resolution and tile aspect vs rendered size), `zorder`, `hotkey`, `settings`,
-`settingsui`, `gesture` (swipe recognition), `dock`, `dockframe` (screen area vs the Dock), `input` (guided: what macOS delivers for F3 and four-finger swipes). Set `BMC_SELFTEST_APP` to pick a target app where a mode needs
+`settingsui`, `gesture` (swipe recognition), `dock`, `dockframe` (screen area vs the Dock), `reflow` (tiles vs window reflow), `input` (guided: what macOS delivers for F3 and four-finger swipes). Set `BMC_SELFTEST_APP` to pick a target app where a mode needs
 one.
 
 `screenshot` mode is the useful one for checking appearance — it opens the

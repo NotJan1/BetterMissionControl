@@ -67,6 +67,7 @@ enum WindowEnumerator {
                     bundleID: owner.bundleIdentifier,
                     title: scWindow.title ?? "",
                     frame: scWindow.frame,
+                    layoutFrame: scWindow.frame,
                     thumbnail: nil
                 )
             )
